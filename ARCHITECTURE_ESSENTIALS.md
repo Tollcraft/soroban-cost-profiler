@@ -38,5 +38,5 @@
 
 ## 7. What is Overengineered? (MVP Cuts)
 * **Embedded SVG Rendering:** Compiling `inferno` into our CLI is unnecessary bloat. v1 should just output a `.folded` text file for users to drop into `speedscope.app`.
-* **Streaming Aggregation:** We planned to aggregate events on-the-fly to save memory. However, since Soroban caps execution at 100M instructions, simply buffering the raw events in a `Vec` will only consume ~200MB of RAM. We can drop the streaming complexity for v1.
+* **Streaming Aggregation vs Sampled Emission:** Streaming every event into the aggregator on-the-fly would destroy performance via 100M hash-map lookups. Conversely, buffering 100M 32-byte events would consume ~3.2GB of RAM and OOM CI runners. **The V1 Cut:** We use Boundary/Sampled tracing. We only emit events on `Call`/`Return`, and accumulate instruction costs locally, flushing a `Step` event only at a configurable sampling interval (e.g., every 1,000 instructions). The hard 100M instruction ceiling is retained to halt infinite loops.
 * **Custom DWARF Parsing:** Manually parsing DWARF sections is prone to edge cases. We should lean on the high-level `addr2line` crate instead of writing custom `gimli` logic.

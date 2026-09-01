@@ -150,9 +150,10 @@ If we need to cut scope for a v1 MVP, these architectural decisions might be ove
 * **The Overengineering:** Bundling `inferno` to natively render SVG flamegraphs from the CLI adds significant dependency bloat and formatting logic. 
 * **The Simplification:** We could just dump a `.folded` stack trace text file and tell developers to drag-and-drop it into `speedscope.app` (or pipe it to the external `flamegraph` CLI tool).
 
-### 2. Streaming / On-the-Fly Aggregation
-* **The Overengineering:** The `Profile Aggregator` is designed to stream and fold `TraceEvent`s instantly to prevent OOM crashes on massive executions.
-* **The Simplification:** Soroban smart contracts have a strict network maximum of ~100M instructions. Storing 100M simple `(pc, cost)` structs in a flat `Vec` in memory only takes a few hundred megabytes of RAM. For v1, we can just buffer all events in a `Vec` and aggregate them after execution finishes, avoiding complex streaming logic.
+### 2. Streaming Aggregation vs. Boundary/Sampled Emission
+* **The Overengineering:** Originally, we considered streaming events directly into the `ProfileAggregator` on-the-fly to avoid Out-Of-Memory (OOM) crashes. However, tree-walking and HashMap lookups on every single instruction (up to 100M times) would create a massive CPU bottleneck on the hottest path, slowing execution to a crawl and destroying the developer experience.
+* **The Simplification:** Instead of streaming *or* blindly buffering every single instruction (which would consume ~3.2GB of RAM for 100M 32-byte events and OOM CI runners), we use **Boundary & Sampled Emission**. We strictly emit `Call` and `Return` events at function boundaries. For raw instructions, the hot-path simply increments a local counter and only pushes a `Step` event periodically (e.g., every 1,000 instructions) as a backstop for tight loops. This sampling interval will be tunable via a CLI flag. 
+*(Note: A hard 100M instruction ceiling is strictly retained to prevent unbounded time execution during infinite loops).*
 
 ### 3. Custom DWARF Parsing
 * **The Overengineering:** Using `gimli` to manually crawl the WASM DWARF sections and build a bespoke source-mapper is a massive undertaking with extreme edge cases.

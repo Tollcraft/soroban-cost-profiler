@@ -49,12 +49,12 @@
 * **Why it's independent:** Basic Rust struct initialization.
 * **Acceptance Criteria:** The struct holds the vector and compiles.
 
-### Issue 8: [Phase 2] Implement `record_step` in `ExecutionTracer`
+### Issue 8: [Phase 2] Implement `record_step` with sampling
 * **Tags:** `feat`, `test`
-* **Context:** The tracer needs to record the cost of individual instructions.
-* **Simplified Task:** Add a `record_step(&mut self, pc: usize, cpu_cost: u64)` method to the tracer that pushes a `Step` event to the vector. Write a unit test.
-* **Why it's independent:** Simple state manipulation.
-* **Acceptance Criteria:** The method works and is covered by a test.
+* **Context:** Emitting a `Step` event for all 100M instructions would consume 3.2GB of RAM. Instead, we accumulate cost locally and sample periodically.
+* **Simplified Task:** Add `current_step_cost: u64` and `sample_rate: u64` fields to `ExecutionTracer`. In `record_step(&mut self, pc: usize, cpu_cost: u64)`, increment `current_step_cost`. Only push a `Step` event to the vector (and reset the counter) if `current_step_cost >= sample_rate`. Write a unit test proving events are only emitted at the threshold.
+* **Why it's independent:** Simple state and math manipulation.
+* **Acceptance Criteria:** The method accumulates cost and only pushes an event when the sample rate is hit.
 
 ### Issue 9: [Phase 2] Implement `record_call` & `record_return`
 * **Tags:** `feat`, `test`

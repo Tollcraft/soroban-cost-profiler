@@ -9,10 +9,10 @@
 
 ### Issue 2: [Phase 5] Define CLI arguments struct
 * **Tags:** `feat`, `good first issue`
-* **Context:** The profiler needs to accept inputs like the WASM path and the output file path.
-* **Simplified Task:** Create a `Cli` struct in `src/main.rs` using `clap::Parser`. Include `--wasm` and `--output` flags.
+* **Context:** The profiler needs to accept inputs like the WASM path, output file path, and a tunable sampling rate.
+* **Simplified Task:** Create a `Cli` struct in `src/main.rs` using `clap::Parser`. Include `--wasm`, `--output`, and a `--sample-rate` flag (default: 1000).
 * **Why it's independent:** Isolated struct definition.
-* **Acceptance Criteria:** Running `cargo run -- --help` prints the arguments correctly.
+* **Acceptance Criteria:** Running `cargo run -- --help` prints all arguments correctly.
 
 ### Issue 3: [Phase 5] Wire up the main pipeline sequence
 * **Tags:** `feat`
