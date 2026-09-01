@@ -1,32 +1,67 @@
 <div align="center">
-  <h1>🔥 Soroban Cost Profiler</h1>
-  <p><strong>Visual flamegraphs and execution tracing for Soroban smart contracts.</strong></p>
+  <h1>soroban-cost-profiler</h1>
+  <p><strong>Visual flamegraphs and execution tracing for Soroban smart contracts</strong></p>
+  <p>
+    <img src="https://img.shields.io/github/actions/workflow/status/Tollcraft/soroban-cost-profiler/build.yml?branch=main" alt="CI Status" />
+    <img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="License" />
+  </p>
+  <p>
+    <a href="https://tollcraft.gitbook.io/docs"><strong>Documentation</strong></a> ·
+    <a href="#"><strong>Demo</strong></a>
+  </p>
 </div>
 
-> Part of the **[Tollcraft](https://github.com/Tollcraft)** initiative.
+> Part of the **[`Tollcraft`](https://github.com/Tollcraft)** initiative.
 
-`soroban-cost-profiler` is Tier 3 of the Tollcraft cost-awareness pipeline. When `soroban-budget-assert` fails your CI because your contract used too many CPU instructions, the Cost Profiler tells you *exactly where* those instructions were spent.
+`soroban-cost-profiler` is Tier 3 of the Tollcraft cost-awareness pipeline. When `soroban-budget-assert` fails your CI because your contract used too many CPU instructions, the Cost Profiler traces your WASM execution and tells you exactly where those instructions were spent.
 
-## 🎯 The Problem
+## The Problem
 
-Testing tools can tell you that `my_expensive_function()` consumed 8,000,000 CPU instructions, but they don't tell you *why*. Was it a specific loop? A costly host function call? An inefficient standard library operation? 
+Testing tools can tell you that `my_expensive_function()` consumed 8,000,000 CPU instructions, but they don't tell you *why*. Was it a specific loop? A costly host function call? An inefficient standard library operation? There is no easy way to introspect the internal execution cost of a Soroban WASM binary during testing.
 
-## ✨ The Solution
+## Features
 
-`soroban-cost-profiler` traces the execution of your WebAssembly (WASM) smart contract instruction-by-instruction. It maps the runtime execution cost back to your Rust source code and generates visual **flamegraphs**, making it trivial to spot the bottlenecks in your logic.
+`soroban-cost-profiler` traces the execution of your WebAssembly (WASM) smart contract instruction-by-instruction. It maps the runtime execution cost back to your Rust source code and generates visual flamegraphs, making it trivial to spot the bottlenecks in your logic.
 
-## 🚀 How it Fits into Tollcraft
+* **Execution Tracing:** Hooks into the Soroban environment's WASM execution engine during local testing to count CPU instructions.
+* **Source Mapping:** Parses DWARF debug information embedded in the compiled Soroban WASM binary to map WASM instruction offsets back to human-readable Rust source code.
+* **Format Compatibility:** Generates output in standard profiling formats (e.g., collapsed stack format) for consumption by tools like Speedscope.
 
-1. **Tier 1 (Prevent):** [`soroban-cost-linter`](https://github.com/Tollcraft/soroban-cost-linter) catches structurally expensive code before compilation.
-2. **Tier 2 (Detect):** [`soroban-budget-assert`](https://github.com/Tollcraft/soroban-budget-assert) measures total execution cost and fails CI if budgets are exceeded.
-3. **Tier 3 (Diagnose):** **`soroban-cost-profiler`** visualizes the execution trace to help you find and fix the specific bottleneck causing the budget failure.
+## How it Fits into Tollcraft
 
-## 🛠️ Architecture (Planned)
+1.  **Linter (`soroban-cost-linter`):** Runs at compile-time (or via `cargo check`). Catches obvious, static structural flaws.
+2.  **Assert (`soroban-budget-assert`):** Runs at test-time. Simulates your cleanly-linted code against the network to measure actual execution costs based on real runtime inputs.
+3.  **Profiler (`soroban-cost-profiler`):** Runs when a budget assertion fails, generating visual flamegraphs to diagnose exactly where the budget was spent.
 
-- **WASM Interpreter Hook:** Hooks into the Soroban environment WASM execution engine to trace instruction counts per function call.
-- **Source Map Resolution:** Uses DWARF debug info embedded in the WASM binary to map WASM functions back to the original Rust source lines.
-- **Flamegraph Generator:** Outputs standard `collapsed` stack formats that can be rendered by tools like `inferno` or Speedscope.
-
-## 🏁 Getting Started
+## Getting Started
 
 *(Coming soon. This repository is currently in the initial planning and scaffolding phase.)*
+
+## Usage
+
+*(Coming soon.)*
+
+## Contributing
+
+We are actively looking for contributors in cost-model research, WASM tracing, and source mapping.
+
+1. Check the open issues to find tasks labeled `good first issue` or `help wanted`.
+2. Fork the repository.
+3. Ensure all Pull Requests target the `main` branch.
+4. Pass all local tests before submitting.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for more detailed guidelines.
+
+## Community
+
+Join the discussion on our [Discord](https://discord.gg/5aprtMSyR).
+
+## Maintainers
+
+| Name | Role | Contact |
+|---|---|---|
+| Tollcraft Team | Core Maintainers | [Tollcraft on Telegram](https://t.me/+Gflo5jZStw1jMjE0) |
+
+## Contributors
+
+[![Contributors](https://contrib.rocks/image?repo=Tollcraft/soroban-cost-profiler)](https://github.com/Tollcraft/soroban-cost-profiler/graphs/contributors)
