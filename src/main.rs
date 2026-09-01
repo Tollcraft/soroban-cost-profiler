@@ -1,11 +1,11 @@
 use soroban_cost_profiler::aggregator::ProfileAggregator;
-use soroban_cost_profiler::formatter::OutputFormatter;
+// use soroban_cost_profiler::formatter::OutputFormatter;
 use soroban_cost_profiler::source_map::SourceMapper;
 use soroban_cost_profiler::tracer::ExecutionTracer;
 
 fn main() {
     println!("soroban-cost-profiler MVP (Not yet implemented)");
-    
+
     // 1. Initialize tracer and execute WASM
     let mut _tracer = ExecutionTracer::new();
     // let events = tracer.trace();
