@@ -35,3 +35,8 @@
 * **Cross-Contract Calls:** If Contract A calls Contract B, the execution context switches to a new WASM binary. The source mapper must dynamically switch DWARF tables, or else it will map Contract B's instructions to random lines in Contract A.
 * **Panics & Abrupt Halts:** If the contract panics mid-execution, the profiler must gracefully flush and render the incomplete tree rather than losing the entire trace.
 * **Infinite Loops:** Unbounded loops will generate infinite trace events and OOM the profiler. We must enforce a hard instruction ceiling (e.g., network max) to halt and flush.
+
+## 7. What is Overengineered? (MVP Cuts)
+* **Embedded SVG Rendering:** Compiling `inferno` into our CLI is unnecessary bloat. v1 should just output a `.folded` text file for users to drop into `speedscope.app`.
+* **Streaming Aggregation:** We planned to aggregate events on-the-fly to save memory. However, since Soroban caps execution at 100M instructions, simply buffering the raw events in a `Vec` will only consume ~200MB of RAM. We can drop the streaming complexity for v1.
+* **Custom DWARF Parsing:** Manually parsing DWARF sections is prone to edge cases. We should lean on the high-level `addr2line` crate instead of writing custom `gimli` logic.

@@ -139,3 +139,21 @@ If a contract test enters an infinite loop, a standard test runner will eventual
 
 ### 4. Rust Closures and Anonymous Types
 **The Edge Case:** Rust heavily utilizes closures, which compile down to deeply nested, anonymous types (e.g., `my_contract::foo::{{closure}}`). DWARF mappers often struggle to present these cleanly, leading to ugly, unreadable frame names in the flamegraph that frustrate developers.
+
+---
+
+## 7. What is Overengineered? (MVP Simplifications)
+
+If we need to cut scope for a v1 MVP, these architectural decisions might be overengineered:
+
+### 1. Embedded SVG Generation (`inferno`)
+* **The Overengineering:** Bundling `inferno` to natively render SVG flamegraphs from the CLI adds significant dependency bloat and formatting logic. 
+* **The Simplification:** We could just dump a `.folded` stack trace text file and tell developers to drag-and-drop it into `speedscope.app` (or pipe it to the external `flamegraph` CLI tool).
+
+### 2. Streaming / On-the-Fly Aggregation
+* **The Overengineering:** The `Profile Aggregator` is designed to stream and fold `TraceEvent`s instantly to prevent OOM crashes on massive executions.
+* **The Simplification:** Soroban smart contracts have a strict network maximum of ~100M instructions. Storing 100M simple `(pc, cost)` structs in a flat `Vec` in memory only takes a few hundred megabytes of RAM. For v1, we can just buffer all events in a `Vec` and aggregate them after execution finishes, avoiding complex streaming logic.
+
+### 3. Custom DWARF Parsing
+* **The Overengineering:** Using `gimli` to manually crawl the WASM DWARF sections and build a bespoke source-mapper is a massive undertaking with extreme edge cases.
+* **The Simplification:** We should rely entirely on the high-level `addr2line` crate (which wraps `gimli`) or even literally shell out to the `llvm-addr2line` CLI tool for v1 to resolve addresses, rather than building a custom parser.

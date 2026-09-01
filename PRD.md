@@ -48,3 +48,7 @@ Currently, developers can use `soroban-budget-assert` to determine *if* their co
 * **Failed/Panicked Transactions:** The profiler must generate a valid flamegraph even if the contract panics or exceeds the budget midway through execution. Developers need to see the cost leading up to the failure.
 * **Multi-Contract Integration Tests:** When developers write integration tests that invoke multiple different contracts sequentially or recursively, the profiler must correctly distinguish and map the costs of each contract separately.
 * **Infinite Loops:** The tool must gracefully halt and output a partial trace if a contract enters an infinite loop, rather than hanging the developer's machine or crashing due to memory exhaustion.
+
+## 9. What is Overengineered? (Scope Cuts for v1)
+* **Native Flamegraph Rendering:** Building SVG generation directly into our CLI is a "nice to have". For the MVP, we will only output standard folded-stack text files and let users view them in free browser tools like `speedscope.app`.
+* **Sub-Instruction Memory Profiling:** Tracking exactly *when* inside a function a single byte is allocated might be too noisy. We can simplify v1 by just profiling CPU instructions, and add memory allocations later as a secondary metric.
