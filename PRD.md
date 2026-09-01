@@ -39,3 +39,7 @@ Currently, developers can use `soroban-budget-assert` to determine *if* their co
 ## 6. Success Metrics
 * **Resolution Time:** Reduces the time a developer spends finding a resource bottleneck from hours (manual binary search via commenting out code) to seconds.
 * **Adoption:** Number of projects generating flamegraphs as part of their CI artifacts alongside `budget-assert` reports.
+
+## 7. Hard Questions & Product Risks
+* **Developer Trust in Data:** The flamegraphs will have opaque blocks for native Host Functions and slightly skewed line mappings due to release-mode optimizations. If developers find the output too inaccurate or confusing to act on, adoption will fail.
+* **Friction of Integration:** If running the profiler requires setting up a highly customized mock environment (rather than just running standard `cargo test`s), the friction may outweigh the diagnostic benefits for many teams.
