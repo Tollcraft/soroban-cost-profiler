@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tollcraft | Soroban Cost Awareness</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    },
+                    colors: {
+                        brand: {
+                            50: '#f0f9ff',
+                            100: '#e0f2fe',
+                            400: '#38bdf8',
+                            500: '#0ea5e9',
+                            600: '#0284c7',
+                            900: '#0c4a6e',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            background-color: #0f172a;
+            color: #f8fafc;
+        }
+        .gradient-text {
+            background: linear-gradient(135deg, #38bdf8 0%, #818cf8 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .card-hover {
+            transition: all 0.3s ease;
+        }
+        .card-hover:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 10px 10px -5px rgba(0, 0, 0, 0.3);
+            border-color: #38bdf8;
+        }
+    </style>
+</head>
+<body class="antialiased min-h-screen flex flex-col">
+
+    <!-- Navbar -->
+    <nav class="border-b border-slate-800 bg-slate-900/80 backdrop-blur-md sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between h-16 items-center">
+                <div class="flex-shrink-0 flex items-center gap-2">
+                    <span class="text-2xl font-bold tracking-tight">Tollcraft</span>
+                </div>
+                <div class="flex space-x-6">
+                    <a href="https://github.com/Tollcraft" target="_blank" class="text-slate-300 hover:text-white font-medium transition-colors">GitHub</a>
+                    <a href="https://tollcraft.gitbook.io/docs" target="_blank" class="text-slate-300 hover:text-white font-medium transition-colors">Documentation</a>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <main class="flex-grow">
+        <div class="relative pt-32 pb-20 sm:pt-40 sm:pb-24 overflow-hidden">
+            <div class="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAiIGhlaWdodD0iMjAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PGNpcmNsZSBjeD0iMSIgY3k9IjEiIHI9IjEiIGZpbGw9InJnYmEoMjU1LDI1NSwyNTUsMC4wNSkiLz48L3N2Zz4=')] [mask-image:linear-gradient(to_bottom,white,transparent)]"></div>
+            
+            <div class="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+                <h1 class="text-5xl sm:text-7xl font-extrabold tracking-tight mb-6">
+                    Stop Guessing <br class="hidden sm:block" />
+                    <span class="gradient-text">Soroban Gas Costs.</span>
+                </h1>
+                <p class="mt-4 text-xl sm:text-2xl text-slate-400 max-w-3xl mx-auto font-light">
+                    A comprehensive, three-tiered cost awareness pipeline for Stellar smart contracts. Prevent, detect, and diagnose execution bottlenecks before they hit mainnet.
+                </p>
+                <div class="mt-10 flex justify-center gap-4">
+                    <a href="#pipeline" class="px-8 py-3 rounded-full bg-brand-500 hover:bg-brand-400 text-white font-semibold text-lg transition-colors shadow-[0_0_20px_rgba(14,165,233,0.3)]">
+                        Explore the Pipeline
+                    </a>
+                    <a href="https://github.com/Tollcraft" class="px-8 py-3 rounded-full bg-slate-800 hover:bg-slate-700 text-white font-semibold text-lg border border-slate-700 transition-colors">
+                        View on GitHub
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Pipeline Section -->
+        <div id="pipeline" class="py-24 bg-slate-900">
+            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                <div class="text-center mb-16">
+                    <h2 class="text-3xl font-bold tracking-tight text-white sm:text-4xl">The Cost Awareness Pipeline</h2>
+                    <p class="mt-4 text-lg text-slate-400">Three specialized tools designed to work together to optimize your smart contracts.</p>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
+                    <!-- Tier 1 -->
+                    <div class="bg-slate-800/50 rounded-2xl p-8 border border-slate-700 card-hover flex flex-col h-full">
+                        <div class="h-12 w-12 rounded-lg bg-blue-500/20 flex items-center justify-center border border-blue-500/30 mb-6">
+                            <span class="text-2xl">🛡️</span>
+                        </div>
+                        <span class="text-blue-400 font-semibold tracking-wider uppercase text-sm mb-2">Tier 1: Prevent</span>
+                        <h3 class="text-2xl font-bold text-white mb-3">Cost Linter</h3>
+                        <p class="text-slate-400 mb-6 flex-grow">A static analysis shield that hooks into the Rust compiler to catch structurally expensive anti-patterns (e.g., storage operations inside loops) before your code even compiles.</p>
+                        <a href="https://github.com/Tollcraft/soroban-cost-linter" class="text-blue-400 hover:text-blue-300 font-medium inline-flex items-center gap-1">
+                            View Repository <span aria-hidden="true">&rarr;</span>
+                        </a>
+                    </div>
+
+                    <!-- Tier 2 -->
+                    <div class="bg-slate-800/50 rounded-2xl p-8 border border-slate-700 card-hover flex flex-col h-full">
+                        <div class="h-12 w-12 rounded-lg bg-emerald-500/20 flex items-center justify-center border border-emerald-500/30 mb-6">
+                            <span class="text-2xl">🧪</span>
+                        </div>
+                        <span class="text-emerald-400 font-semibold tracking-wider uppercase text-sm mb-2">Tier 2: Detect</span>
+                        <h3 class="text-2xl font-bold text-white mb-3">Budget Assert</h3>
+                        <p class="text-slate-400 mb-6 flex-grow">An empirical runtime test harness. Simulates your cleanly-linted code against the network to measure exact resource consumption (CPU/IO) and fails CI if budget limits are exceeded.</p>
+                        <a href="https://github.com/Tollcraft/soroban-budget-assert" class="text-emerald-400 hover:text-emerald-300 font-medium inline-flex items-center gap-1">
+                            View Repository <span aria-hidden="true">&rarr;</span>
+                        </a>
+                    </div>
+
+                    <!-- Tier 3 -->
+                    <div class="bg-slate-800/50 rounded-2xl p-8 border border-slate-700 card-hover flex flex-col h-full relative overflow-hidden">
+                        <div class="absolute top-0 right-0 px-3 py-1 bg-brand-500 text-xs font-bold text-white rounded-bl-lg">NEW</div>
+                        <div class="h-12 w-12 rounded-lg bg-brand-500/20 flex items-center justify-center border border-brand-500/30 mb-6">
+                            <span class="text-2xl">🔥</span>
+                        </div>
+                        <span class="text-brand-400 font-semibold tracking-wider uppercase text-sm mb-2">Tier 3: Diagnose</span>
+                        <h3 class="text-2xl font-bold text-white mb-3">Cost Profiler</h3>
+                        <p class="text-slate-400 mb-6 flex-grow">When a budget fails, the profiler tells you exactly why. It traces WASM execution instruction-by-instruction and maps the cost back to your Rust source code via visual flamegraphs.</p>
+                        <a href="https://github.com/Tollcraft/soroban-cost-profiler" class="text-brand-400 hover:text-brand-300 font-medium inline-flex items-center gap-1">
+                            View Repository <span aria-hidden="true">&rarr;</span>
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="bg-slate-950 py-12 border-t border-slate-800">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+            <p class="text-slate-500">Built for the Stellar ecosystem.</p>
+            <div class="mt-4 flex justify-center space-x-6">
+                <a href="https://github.com/Tollcraft" class="text-slate-400 hover:text-white">
+                    <span class="sr-only">GitHub</span>
+                    <svg class="h-6 w-6" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                        <path fill-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clip-rule="evenodd" />
+                    </svg>
+                </a>
+            </div>
+        </div>
+    </footer>
+</body>
+</html>
