@@ -10,6 +10,7 @@
 - [x] Setup Tollcraft Org Landing Page.
 
 ## Phase 2: Execution Tracing (In Progress 🚧)
+- [x] **SPIKE:** Investigate `soroban-env-host` Budget API limitations.
 - [ ] **WASM Engine Setup:** Import `soroban-env-host` and `wasmi` as dependencies.
 - [ ] **Fixture Compilation:** Add a Makefile/script to compile a dummy Soroban contract into `fixtures/dummy-contract`.
 - [ ] **Tracer Hooks:** Implement the `wasmi` execution hooks in `src/tracer.rs` to intercept instructions.
