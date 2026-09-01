@@ -24,3 +24,9 @@
 * **Cost Metric:** Primary metric is Soroban CPU instructions, but the architecture must support memory allocations as a secondary dimension.
 * **Deterministic Output:** Tracing must be fully deterministic based on the WASM execution rules of the Soroban environment.
 * **Standard Formats:** Output must be compatible with standard folded-stack formats to allow users to use custom renderers (e.g., speedscope) if they prefer them over the built-in SVG generator.
+
+## 5. Hard Questions (What Could Break?)
+* **DWARF vs. Optimizations:** Soroban contracts must be profiled in `--release` to get accurate costs, but release optimizations (inlining/LTO) destroy source mapping. The flamegraph might point to inaccurate or "unknown" lines.
+* **Host Function Blindspots:** Most costs occur inside native Host Functions (like crypto hashing). The WASM tracer cannot see inside these native calls, resulting in massive opaque blocks in the flamegraph.
+* **Tracing Overhead (OOM):** Emitting an event for every WASM instruction can generate millions of events per second. If not aggregated synchronously on-the-fly, the profiler will run out of memory.
+* **Upstream Breakage:** Hooking into `wasmi` or `soroban-env-host` internals means any major upstream engine update by Stellar will break the profiler.

@@ -98,3 +98,25 @@ pub struct CallStackNode {
    * On `Return`, it pops the frame, adding its totals to its parent's `inclusive_cpu`.
 6. **Resolve:** The Aggregator resolves all recorded WASM PCs to `SourceFrame`s using the Source Mapper.
 7. **Render:** The Aggregator produces folded stacks (e.g., `main;swap;calculate_fee 5000`) and passes them to `inferno` to create `flamegraph.svg`.
+
+---
+
+## 5. Hard Questions & Known Risks (What Could Break?)
+
+When building this profiler, these are the critical technical risks most likely to cause failure or severe degradation of the developer experience:
+
+### 1. DWARF Mapping Loss in Release Builds
+**The Risk:** To get accurate gas/budget costs in Soroban, contracts *must* be profiled using a highly optimized release build (`opt-level = "z"`, `lto = true`). However, aggressive optimizations (inlining, loop unrolling) destroy source-to-instruction mapping. DWARF data will likely point multiple WASM instructions to the same line, or drop lines entirely.
+**The Breakage:** The flamegraph will look heavily mangled, attributing huge costs to random lines or pointing to "unknown location".
+
+### 2. The "Host Function" Black Box
+**The Risk:** Soroban smart contracts spend a massive portion of their budget inside "Host Functions" (e.g., `env.crypto().sha256()`), which are written in native Rust on the host node, NOT in WASM.
+**The Breakage:** Our WASM tracer only sees the `call` instruction entering the host and the return. The flamegraph will show a massive un-expandable block for the host function call, unable to break down the cost *inside* the native host code unless we explicitly hardcode tracing hooks into the `soroban-env-host` native functions.
+
+### 3. Memory & Tracing Overhead (OOM)
+**The Risk:** Tracing every single WASM instruction emits a massive amount of `TraceEvent`s. A contract that takes 10,000,000 instructions to execute will generate 10,000,000 events.
+**The Breakage:** If these events are kept in memory before aggregation, profiling a heavy contract will exhaust system RAM (OOM) or make test execution 100x slower, destroying the developer experience. Events must be aggregated on-the-fly rather than buffered.
+
+### 4. Soroban Environment Instability
+**The Risk:** We are hooking deeply into `wasmi` or `soroban-env-host` internals.
+**The Breakage:** If Stellar updates the Soroban host (e.g., swapping `wasmi` for `wasmtime`, altering the cost model logic, or changing the host function dispatch ABI), our internal tracing hooks will break completely and require a rewrite.
