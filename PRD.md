@@ -43,3 +43,8 @@ Currently, developers can use `soroban-budget-assert` to determine *if* their co
 ## 7. Hard Questions & Product Risks
 * **Developer Trust in Data:** The flamegraphs will have opaque blocks for native Host Functions and slightly skewed line mappings due to release-mode optimizations. If developers find the output too inaccurate or confusing to act on, adoption will fail.
 * **Friction of Integration:** If running the profiler requires setting up a highly customized mock environment (rather than just running standard `cargo test`s), the friction may outweigh the diagnostic benefits for many teams.
+
+## 8. Edge Cases to Support (Product Scope)
+* **Failed/Panicked Transactions:** The profiler must generate a valid flamegraph even if the contract panics or exceeds the budget midway through execution. Developers need to see the cost leading up to the failure.
+* **Multi-Contract Integration Tests:** When developers write integration tests that invoke multiple different contracts sequentially or recursively, the profiler must correctly distinguish and map the costs of each contract separately.
+* **Infinite Loops:** The tool must gracefully halt and output a partial trace if a contract enters an infinite loop, rather than hanging the developer's machine or crashing due to memory exhaustion.
