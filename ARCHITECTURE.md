@@ -122,8 +122,9 @@ When building this profiler, these are the critical technical risks most likely 
 **The Breakage:** If Stellar updates the Soroban host (e.g., swapping `wasmi` for `wasmtime`, altering the cost model logic, or changing the host function dispatch ABI), our internal tracing hooks will break completely and require a rewrite.
 
 ### 5. The Stripped WASM Precondition
-**The Risk:** To hit the "Zero-Instrumentation" requirement, we rely entirely on DWARF debug information embedded in the WASM binary. However, Soroban contracts are heavily optimized for size. The default workflow is to strip all debug info from the `.wasm` file.
-**The Breakage:** If a developer runs the profiler on a standard stripped release binary, the source mapper will instantly fail. The "zero-instrumentation" promise still requires developers to manually modify their `Cargo.toml` (`[profile.release] debug = 2`), adding friction to the adoption funnel.
+**The Risk:** To map line numbers without manual instrumentation, we rely on DWARF info. But Soroban's standard workflow strips debug info to minimize on-chain binary size. If `stellar contract build` runs downstream `wasm-opt` passes, it may strip DWARF regardless of Cargo configuration.
+**The Breakage:** If a stripped binary is profiled, the source mapper will gracefully degrade to raw WASM function indices (or the WASM `name` section, if preserved) rather than failing entirely. Developers must manually configure `debug = "line-tables-only"`. 
+*CRITICAL:* This precondition is additive to Risk #1. Adding `line-tables-only` does *not* prevent LTO and aggressive inlining from mangling the line outputs. It just guarantees the tables exist.
 
 ---
 

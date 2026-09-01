@@ -20,8 +20,8 @@
 * **`SourceFrame`**: Resolved code location. `(function_name, file_path, line_number)`
 
 ## 4. Critical Constraints & Decisions
-* **Zero-Code-Instrumentation:** The profiler must work on compiled WASM without developers adding tracing macros. However, they *must* configure `debug = 2` in their `Cargo.toml` release profile to preserve DWARF data.
-* **Cost Metric:** Primary metric is Soroban CPU instructions, but the architecture must support memory allocations as a secondary dimension.
+* **Zero-Code-Instrumentation:** The profiler must work on compiled WASM without developers adding tracing macros. However, they *must* configure `debug = "line-tables-only"` in their `Cargo.toml` release profile to preserve DWARF data.
+* Cost Metric:** Primary metric is Soroban CPU instructions, but the architecture must support memory allocations as a secondary dimension.
 * **Deterministic Output:** Tracing must be fully deterministic based on the WASM execution rules of the Soroban environment.
 * **Standard Formats:** Output must be compatible with standard folded-stack formats to allow users to use custom renderers (e.g., speedscope) if they prefer them over the built-in SVG generator.
 
@@ -30,7 +30,7 @@
 * **Host Function Attribution Limits:** Most costs occur inside native Host Functions (like crypto). The public `Budget` API only yields cumulative totals per `CostType` for the run, not per-call-site attribution. Unless we tap into unstable internal hooks (`invocation_metering`), flamegraphs may show opaque blocks for host calls.
 * **Tracing Overhead (OOM):** Buffering 100M 32-byte events consumes ~3.2GB of RAM (up to 6.4GB during reallocation) causing CI crashes. We strictly use sampled/boundary tracing instead of 1:1 instruction buffering.
 * **Upstream Breakage:** Hooking into `wasmi` or `soroban-env-host` internals (like `invocation_metering`) means any major upstream update by Stellar will break the profiler.
-* **Stripped WASM Binaries:** Soroban developers naturally strip debug info to save on-chain costs. If they forget to enable `debug = 2` for profiling, the tool is blind.
+* **Stripped WASM Binaries:** Soroban developers naturally strip debug info. If they forget to enable `debug = "line-tables-only"`, the tool falls back to raw WASM function indices. NOTE: Enabling debug info does *not* fix the LTO/mangling risk above—both are additive. Downstream tools (`wasm-opt`) may also strip this regardless of Cargo config.
 
 ## 6. Edge Cases & Blind Spots
 * **Cross-Contract Calls:** If Contract A calls Contract B, the execution context switches to a new WASM binary. The source mapper must dynamically switch DWARF tables, or else it will map Contract B's instructions to random lines in Contract A.

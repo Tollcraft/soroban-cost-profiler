@@ -39,7 +39,7 @@ Testing tools can tell you that `my_expensive_function()` consumed 8,000,000 CPU
 
 ## Usage
 
-**Important: The `debug = 2` Requirement**
+**Important: The `debug` Precondition**
 The profiler requires zero *code* instrumentation, but you **must** configure your release build to include DWARF debug information. Soroban contracts are typically stripped for size, which makes profiling impossible. 
 
 Ensure your `Cargo.toml` contains:
@@ -47,8 +47,13 @@ Ensure your `Cargo.toml` contains:
 [profile.release]
 opt-level = "z"
 lto = true
-debug = 2 # REQUIRED FOR PROFILING
+debug = "line-tables-only" # REQUIRED FOR PROFILING (Lighter than full debug=2)
 ```
+
+> [!WARNING]
+> **Two Caveats:**
+> 1. **Downstream Stripping:** If you use `stellar contract build` instead of `cargo build`, downstream tools (like `wasm-opt`) may still strip debug sections regardless of your `Cargo.toml`. We are actively investigating reliable CLI flags.
+> 2. **Inlining (LTO):** Preserving debug tables does *not* stop the compiler from aggressively inlining functions. Your flamegraph may still have coarse mappings for heavily optimized loops.
 
 ## Contributing
 

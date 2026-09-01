@@ -1,5 +1,12 @@
 # Phase 3: DWARF Source Mapping - Issue Bank
 
+### Issue 0: [Phase 3] SPIKE: Investigate WASM `name` section fallback & `wasm-opt` behavior
+* **Tags:** `research`, `architecture`
+* **Context:** Developers often strip DWARF sections. We need to know if the lightweight WASM `name` section survives standard `stellar contract build` pipelines, and if downstream `wasm-opt` strips it regardless of `Cargo.toml` settings.
+* **Simplified Task:** Build a standard Soroban contract with `debug = "line-tables-only"` using the official CLI. Analyze the `.wasm` file using `wasm-objdump` to see what sections survive. Determine if we can rely on the `name` section as a graceful fallback when DWARF is missing.
+* **Why it's independent:** Pure research task before building the DWARF mapper.
+* **Acceptance Criteria:** A written summary on the issue detailing which debug sections survive standard builds and how to extract the `name` section if DWARF fails.
+
 ### Issue 1: [Phase 3] Add `addr2line` and `gimli` dependencies
 * **Tags:** `chore`, `good first issue`
 * **Context:** We need external crates to parse the DWARF debug information embedded in the WASM.
