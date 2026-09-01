@@ -27,9 +27,9 @@ Currently, developers can use `soroban-budget-assert` to determine *if* their co
 * **Format Compatibility:** The profiler must generate output in standard profiling formats (e.g., collapsed stack format) that can be immediately consumed by popular visualization tools like `inferno`, `speedscope`, or standard `flamegraph` generators.
 * **Cost Dimensions:** It should allow developers to generate flamegraphs based on different dimensions (e.g., CPU instructions, memory allocated, host function calls).
 
-### 4.4. Seamless Developer Experience
-* **Drop-in Integration:** It should be easy to run against existing tests. For example, `cargo run -p soroban-cost-profiler -- benchmark_test`.
-* **Zero Code Modification:** Developers should not have to manually instrument their smart contract code with tracing macros to use the tool.
+### 4.4. Developer Experience
+* **Standalone Execution:** The tool runs as a standalone CLI against the compiled WASM binary (e.g., `soroban-cost-profiler --wasm target/.../contract.wasm --fn profile_setup`). 
+* **Zero Code Modification:** Developers do not have to manually instrument their smart contract code with tracing macros. However, they may need to expose a dedicated wrapper function in their contract to establish the necessary mock state before executing the target logic.
 
 ## 5. Non-Goals (Out of Scope for v1)
 * **Live Network Profiling:** The tool will trace execution locally in a simulated environment, not by querying mainnet/testnet transactions.
@@ -42,7 +42,7 @@ Currently, developers can use `soroban-budget-assert` to determine *if* their co
 
 ## 7. Hard Questions & Product Risks
 * **Developer Trust in Data:** Native Host Functions (crypto, storage) consume most of the budget. If our tool can only provide cumulative totals for these costs rather than per-call-site attribution, developers might find the flamegraphs too coarse. Combined with skewed line mappings from release-mode optimizations, adoption will fail if the output is not actionable.
-* **Friction of Integration:** If running the profiler requires setting up a highly customized mock environment (rather than just running standard `cargo test`s), the friction may outweigh the diagnostic benefits for many teams.
+* **Friction of Integration (Bespoke Harnesses):** Because we cannot inject `wasmi` tracing hooks into a pre-compiled `cargo test` binary, the profiler MUST run as a standalone CLI executing the `.wasm` file directly. This means developers cannot use their existing Rust test setups; they must compile the contract and potentially write a bespoke entry-point function just to set up the mock ledger state for profiling. This high friction may heavily restrict adoption.
 * **The Stripped WASM Precondition:** Soroban developers optimize for small WASM sizes, meaning they typically strip debug info from release builds. To get line numbers, they must set `debug = "line-tables-only"` in `Cargo.toml`. If they forget, the tool will gracefully degrade to raw WASM function indices (or the WASM `name` section) rather than failing entirely. Even when configured correctly, this is subject to the LTO/inlining mangling mentioned in Risk #1.
 
 ## 8. Edge Cases to Support (Product Scope)
