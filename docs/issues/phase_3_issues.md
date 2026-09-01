@@ -62,3 +62,17 @@
 * **Simplified Task:** Write a unit test that passes an empty byte array to `SourceMapper::new` and verifies it returns the expected error.
 * **Why it's independent:** Isolated testing.
 * **Acceptance Criteria:** The test passes.
+
+### Issue 10: [Phase 3] Document `SourceMapper` with inline rustdocs
+* **Tags:** `docs`, `good first issue`
+* **Context:** The mapping logic is opaque; we need good code-level documentation.
+* **Simplified Task:** Add `///` comments to the `SourceMapper` struct and the `resolve` method explaining the input (PC) and output (SourceFrame).
+* **Why it's independent:** Pure documentation task.
+* **Acceptance Criteria:** `cargo doc` generates the correct method documentation.
+
+### Issue 11: [Phase 3] Create internal `dwarf_mapping.md` doc
+* **Tags:** `docs`
+* **Context:** DWARF parsing is notoriously complex. We need an internal guide for contributors.
+* **Simplified Task:** Create `docs/internals/dwarf_mapping.md` explaining how `addr2line` translates WASM addresses to Rust source code.
+* **Why it's independent:** Writing markdown documentation.
+* **Acceptance Criteria:** The markdown file exists and explains the DWARF resolution process.

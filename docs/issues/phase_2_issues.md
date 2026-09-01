@@ -111,3 +111,16 @@
 * **Simplified Task:** Write a dummy function that instantiates a basic `soroban_env_host::Host` object.
 * **Why it's independent:** Isolated setup of the Soroban SDK host environment.
 * **Acceptance Criteria:** Returns a valid `Host` instance.
+
+### Issue 17: [Phase 2] Document the `TraceEvent` data models
+* **Tags:** `docs`, `good first issue`
+* **Context:** Future contributors need to understand exactly what data is captured during a trace.
+* **Simplified Task:** Add detailed inline Rustdocs (`///`) to the `TraceEvent`, `EventType`, and `CallStackNode` structs in `src/models.rs`.
+* **Why it's independent:** Purely adding comments to existing structs.
+* **Acceptance Criteria:** `cargo doc` generates clean, readable documentation for the models.
+
+### Issue 18: [Phase 2] Create internal `tracer_architecture.md` doc
+* **Context:** Hooking into a WASM engine is complex and needs a dedicated explanation.
+* **Simplified Task:** Create a `docs/internals/tracer_architecture.md` file explaining how `wasmi` intercepts instructions and how our buffer handles it.
+* **Why it's independent:** Writing markdown documentation.
+* **Acceptance Criteria:** The markdown file exists and explains the tracer mechanics.

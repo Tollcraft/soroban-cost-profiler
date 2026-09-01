@@ -55,3 +55,17 @@
 * **Simplified Task:** Update the traversal to append the node's `exclusive_cpu` cost at the end of each path string.
 * **Why it's independent:** Simple string concatenation.
 * **Acceptance Criteria:** The final string perfectly matches the `.folded` spec.
+
+### Issue 9: [Phase 4] Document the `.folded` stack format
+* **Tags:** `docs`, `good first issue`
+* **Context:** Contributors formatting the output need to know exactly what the string should look like.
+* **Simplified Task:** Create a `docs/internals/folded_stack_spec.md` file detailing the syntax requirements of a collapsed stack file.
+* **Why it's independent:** Writing markdown documentation.
+* **Acceptance Criteria:** The spec clearly shows examples of the `.folded` format.
+
+### Issue 10: [Phase 4] Document `inclusive` vs `exclusive` math
+* **Tags:** `docs`, `good first issue`
+* **Context:** The mathematical difference between inclusive and exclusive costs often confuses new developers.
+* **Simplified Task:** Create a `docs/internals/cost_math.md` file (or add it to `ARCHITECTURE.md`) explaining the difference with a simple diagram/example.
+* **Why it's independent:** Writing markdown documentation.
+* **Acceptance Criteria:** The difference is clearly explained for future contributors.

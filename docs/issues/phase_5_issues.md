@@ -48,3 +48,24 @@
 * **Simplified Task:** Update the "Usage" section of `README.md` with examples of running `soroban-cost-profiler --wasm my_contract.wasm --output out.folded`.
 * **Why it's independent:** Pure documentation update.
 * **Acceptance Criteria:** README is updated.
+
+### Issue 8: [Phase 5] Write the `--help` string documentation
+* **Tags:** `docs`, `good first issue`
+* **Context:** The CLI tool needs user-friendly help text when running `--help`.
+* **Simplified Task:** Add `#[clap(about = "...")]` and `#[clap(help = "...")]` attributes to the `Cli` struct in `src/main.rs`.
+* **Why it's independent:** Just writing user-facing text strings.
+* **Acceptance Criteria:** The CLI prints a beautifully formatted, helpful explanation of the tool.
+
+### Issue 9: [Phase 5] Create a troubleshooting guide
+* **Tags:** `docs`
+* **Context:** Users will inevitably hit panics or OOM ceilings. They need a guide to resolve them.
+* **Simplified Task:** Create `docs/troubleshooting.md` explaining why the "100M instruction limit reached" or "Missing DWARF data" errors occur and how to fix them.
+* **Why it's independent:** Writing markdown documentation.
+* **Acceptance Criteria:** Guide exists with solutions for common edge cases.
+
+### Issue 10: [Phase 5] Write an End-to-End Tutorial
+* **Tags:** `docs`
+* **Context:** Users need a step-by-step guide to actually view their flamegraphs.
+* **Simplified Task:** Create `docs/tutorial.md` walking a user through compiling a contract, running the profiler, and dropping the `.folded` file into Speedscope.
+* **Why it's independent:** Writing markdown documentation.
+* **Acceptance Criteria:** A complete, easy-to-follow tutorial exists.
