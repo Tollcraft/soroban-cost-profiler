@@ -43,6 +43,7 @@ Currently, developers can use `soroban-budget-assert` to determine *if* their co
 ## 7. Hard Questions & Product Risks
 * **Developer Trust in Data:** Native Host Functions (crypto, storage) consume most of the budget. If our tool can only provide cumulative totals for these costs rather than per-call-site attribution, developers might find the flamegraphs too coarse. Combined with skewed line mappings from release-mode optimizations, adoption will fail if the output is not actionable.
 * **Friction of Integration:** If running the profiler requires setting up a highly customized mock environment (rather than just running standard `cargo test`s), the friction may outweigh the diagnostic benefits for many teams.
+* **The Stripped WASM Precondition:** Soroban developers optimize for small WASM sizes, meaning they typically strip debug info from release builds. While our tool requires zero *code* instrumentation, it does require a *build* configuration change (`debug = 2` in `Cargo.toml`). If developers forget this, the tool fails completely.
 
 ## 8. Edge Cases to Support (Product Scope)
 * **Failed/Panicked Transactions:** The profiler must generate a valid flamegraph even if the contract panics or exceeds the budget midway through execution. Developers need to see the cost leading up to the failure.

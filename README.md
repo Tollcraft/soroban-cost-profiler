@@ -39,7 +39,16 @@ Testing tools can tell you that `my_expensive_function()` consumed 8,000,000 CPU
 
 ## Usage
 
-*(Coming soon.)*
+**Important: The `debug = 2` Requirement**
+The profiler requires zero *code* instrumentation, but you **must** configure your release build to include DWARF debug information. Soroban contracts are typically stripped for size, which makes profiling impossible. 
+
+Ensure your `Cargo.toml` contains:
+```toml
+[profile.release]
+opt-level = "z"
+lto = true
+debug = 2 # REQUIRED FOR PROFILING
+```
 
 ## Contributing
 

@@ -121,6 +121,10 @@ When building this profiler, these are the critical technical risks most likely 
 **The Risk:** We are hooking deeply into `wasmi` or `soroban-env-host` internals.
 **The Breakage:** If Stellar updates the Soroban host (e.g., swapping `wasmi` for `wasmtime`, altering the cost model logic, or changing the host function dispatch ABI), our internal tracing hooks will break completely and require a rewrite.
 
+### 5. The Stripped WASM Precondition
+**The Risk:** To hit the "Zero-Instrumentation" requirement, we rely entirely on DWARF debug information embedded in the WASM binary. However, Soroban contracts are heavily optimized for size. The default workflow is to strip all debug info from the `.wasm` file.
+**The Breakage:** If a developer runs the profiler on a standard stripped release binary, the source mapper will instantly fail. The "zero-instrumentation" promise still requires developers to manually modify their `Cargo.toml` (`[profile.release] debug = 2`), adding friction to the adoption funnel.
+
 ---
 
 ## 6. Edge Cases & Blind Spots
