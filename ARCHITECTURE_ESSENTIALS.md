@@ -17,10 +17,10 @@
 ## 3. Key Data Models
 * **`TraceEvent`**: Raw data from the engine. `(pc, cost_delta, event_type)`
 * **`CallStackNode`**: Aggregated tree node. `(inclusive_cost, exclusive_cost, children_nodes)`
-* **`SourceFrame`**: Resolved code location. `(function_name, file_path, line_number)`
+* **`SourceFrame`**: Resolved code location. `(function_name, Option<file_path>, Option<line_number>)`
 
 ## 4. Critical Constraints & Decisions
-* **Zero-Code-Instrumentation:** The profiler must work on compiled WASM without developers adding tracing macros. However, they *must* configure `debug = "line-tables-only"` in their `Cargo.toml` release profile to preserve DWARF data.
+* **Zero-Code-Instrumentation:** The profiler must work on compiled WASM without developers adding tracing macros. However, they *must* configure `[profile.profiling] inherits = "release", debug = "line-tables-only"` in their `Cargo.toml` to preserve DWARF data safely.
 * Cost Metric:** Primary metric is Soroban CPU instructions, but the architecture must support memory allocations as a secondary dimension.
 * **Deterministic Output:** Tracing must be fully deterministic based on the WASM execution rules of the Soroban environment.
 * **Standard Formats:** Output must be compatible with standard folded-stack formats to allow users to use custom renderers (e.g., speedscope) if they prefer them over the built-in SVG generator.

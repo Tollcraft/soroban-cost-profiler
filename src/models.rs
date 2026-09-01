@@ -15,8 +15,8 @@ pub struct TraceEvent {
 
 pub struct SourceFrame {
     pub function_name: String,
-    pub file_path: String,
-    pub line_number: u32,
+    pub file_path: Option<String>,
+    pub line_number: Option<u32>,
 }
 
 pub struct CallStackNode {

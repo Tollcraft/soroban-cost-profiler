@@ -123,7 +123,7 @@ When building this profiler, these are the critical technical risks most likely 
 
 ### 5. The Stripped WASM Precondition
 **The Risk:** To map line numbers without manual instrumentation, we rely on DWARF info. But Soroban's standard workflow strips debug info to minimize on-chain binary size. If `stellar contract build` runs downstream `wasm-opt` passes, it may strip DWARF regardless of Cargo configuration.
-**The Breakage:** If a stripped binary is profiled, the source mapper will gracefully degrade to raw WASM function indices (or the WASM `name` section, if preserved) rather than failing entirely. Developers must manually configure `debug = "line-tables-only"`. 
+**The Breakage:** If a stripped binary is profiled, the source mapper will gracefully degrade to raw WASM function indices (or the WASM `name` section, if preserved) rather than failing entirely. Developers must manually configure a custom `[profile.profiling]` with `debug = "line-tables-only"` to avoid polluting their mainnet `release` build with expensive bloat. 
 *CRITICAL:* This precondition is additive to Risk #1. Adding `line-tables-only` does *not* prevent LTO and aggressive inlining from mangling the line outputs. It just guarantees the tables exist.
 
 ---

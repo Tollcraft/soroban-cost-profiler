@@ -42,13 +42,14 @@ Testing tools can tell you that `my_expensive_function()` consumed 8,000,000 CPU
 **Important: The `debug` Precondition**
 The profiler requires zero *code* instrumentation, but you **must** configure your release build to include DWARF debug information. Soroban contracts are typically stripped for size, which makes profiling impossible. 
 
-Ensure your `Cargo.toml` contains:
+Ensure your `Cargo.toml` contains a dedicated profile for profiling:
 ```toml
-[profile.release]
-opt-level = "z"
-lto = true
-debug = "line-tables-only" # REQUIRED FOR PROFILING (Lighter than full debug=2)
+[profile.profiling]
+inherits = "release"
+debug = "line-tables-only" # REQUIRED FOR PROFILING
 ```
+> [!CAUTION]
+> **Deployment Safety:** Do NOT add `debug` to your main `[profile.release]`. If you accidentally deploy a contract with debug tables to mainnet, you will pay significantly higher on-chain fees for the binary bloat. Always compile with `cargo build --profile profiling` when generating a flamegraph.
 
 > [!WARNING]
 > **Two Caveats:**
