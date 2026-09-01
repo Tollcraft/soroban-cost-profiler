@@ -1,5 +1,12 @@
 # Phase 2: Execution Tracing - Issue Bank
 
+### Issue 0: [Phase 2] SPIKE: Investigate `soroban-env-host` Budget API limitations
+* **Tags:** `research`, `architecture`
+* **Context:** Most budget is spent in native Host Functions. The public `Budget::get_cost_tracker()` API only gives cumulative per-`CostType` totals, not per-call-site attribution. Internal hooks (`invocation_metering`) exist but are unstable.
+* **Simplified Task:** Time-box an investigation (e.g., 2-4 hours). Determine if there is *any* way to intercept per-call-site host costs without forking `rs-soroban-env`. If we must fall back to cumulative totals, document the exact public API methods we will use.
+* **Why it's independent:** Pure research task that gates further host-metering implementation.
+* **Acceptance Criteria:** A written summary on the issue detailing whether call-site attribution is possible via public APIs, or if we must scope down to cumulative totals for V1.
+
 ### Issue 1: [Phase 2] Scaffold the `fixtures/dummy-contract` library
 * **Tags:** `chore`, `good first issue`
 * **Context:** Before we can test our profiler, we need a compiled Soroban WASM binary to profile.

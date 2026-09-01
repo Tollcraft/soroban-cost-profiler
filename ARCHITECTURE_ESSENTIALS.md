@@ -27,9 +27,9 @@
 
 ## 5. Hard Questions (What Could Break?)
 * **DWARF vs. Optimizations:** Soroban contracts must be profiled in `--release` to get accurate costs, but release optimizations (inlining/LTO) destroy source mapping. The flamegraph might point to inaccurate or "unknown" lines.
-* **Host Function Blindspots:** Most costs occur inside native Host Functions (like crypto hashing). The WASM tracer cannot see inside these native calls, resulting in massive opaque blocks in the flamegraph.
-* **Tracing Overhead (OOM):** Emitting an event for every WASM instruction can generate millions of events per second. If not aggregated synchronously on-the-fly, the profiler will run out of memory.
-* **Upstream Breakage:** Hooking into `wasmi` or `soroban-env-host` internals means any major upstream engine update by Stellar will break the profiler.
+* **Host Function Attribution Limits:** Most costs occur inside native Host Functions (like crypto). The public `Budget` API only yields cumulative totals per `CostType` for the run, not per-call-site attribution. Unless we tap into unstable internal hooks (`invocation_metering`), flamegraphs may show opaque blocks for host calls.
+* **Tracing Overhead (OOM):** Buffering 100M 32-byte events consumes ~3.2GB of RAM (up to 6.4GB during reallocation) causing CI crashes. We strictly use sampled/boundary tracing instead of 1:1 instruction buffering.
+* **Upstream Breakage:** Hooking into `wasmi` or `soroban-env-host` internals (like `invocation_metering`) means any major upstream update by Stellar will break the profiler.
 
 ## 6. Edge Cases & Blind Spots
 * **Cross-Contract Calls:** If Contract A calls Contract B, the execution context switches to a new WASM binary. The source mapper must dynamically switch DWARF tables, or else it will map Contract B's instructions to random lines in Contract A.

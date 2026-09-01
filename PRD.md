@@ -41,7 +41,7 @@ Currently, developers can use `soroban-budget-assert` to determine *if* their co
 * **Adoption:** Number of projects generating flamegraphs as part of their CI artifacts alongside `budget-assert` reports.
 
 ## 7. Hard Questions & Product Risks
-* **Developer Trust in Data:** The flamegraphs will have opaque blocks for native Host Functions and slightly skewed line mappings due to release-mode optimizations. If developers find the output too inaccurate or confusing to act on, adoption will fail.
+* **Developer Trust in Data:** Native Host Functions (crypto, storage) consume most of the budget. If our tool can only provide cumulative totals for these costs rather than per-call-site attribution, developers might find the flamegraphs too coarse. Combined with skewed line mappings from release-mode optimizations, adoption will fail if the output is not actionable.
 * **Friction of Integration:** If running the profiler requires setting up a highly customized mock environment (rather than just running standard `cargo test`s), the friction may outweigh the diagnostic benefits for many teams.
 
 ## 8. Edge Cases to Support (Product Scope)

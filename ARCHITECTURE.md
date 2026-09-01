@@ -109,13 +109,13 @@ When building this profiler, these are the critical technical risks most likely 
 **The Risk:** To get accurate gas/budget costs in Soroban, contracts *must* be profiled using a highly optimized release build (`opt-level = "z"`, `lto = true`). However, aggressive optimizations (inlining, loop unrolling) destroy source-to-instruction mapping. DWARF data will likely point multiple WASM instructions to the same line, or drop lines entirely.
 **The Breakage:** The flamegraph will look heavily mangled, attributing huge costs to random lines or pointing to "unknown location".
 
-### 2. The "Host Function" Black Box
-**The Risk:** Soroban smart contracts spend a massive portion of their budget inside "Host Functions" (e.g., `env.crypto().sha256()`), which are written in native Rust on the host node, NOT in WASM.
-**The Breakage:** Our WASM tracer only sees the `call` instruction entering the host and the return. The flamegraph will show a massive un-expandable block for the host function call, unable to break down the cost *inside* the native host code unless we explicitly hardcode tracing hooks into the `soroban-env-host` native functions.
+### 2. Host Function Attribution Limits (The Black Box)
+**The Risk:** Soroban smart contracts spend the vast majority of their budget inside native "Host Functions" (e.g., crypto, storage) which our WASM tracer cannot see. The public `soroban_env_host::budget::Budget` API only exposes `get_cost_tracker()`, which provides *cumulative* totals per `CostType` for the entire run, not per-call-site attribution. 
+**The Breakage:** If we cannot achieve per-call-site attribution without relying on internal, non-public hooks (`invocation_metering`), the flamegraph might just show massive opaque blocks for host calls. Relying on those internal hooks risks severe upstream brittleness (Risk #4).
 
 ### 3. Memory & Tracing Overhead (OOM)
-**The Risk:** Tracing every single WASM instruction emits a massive amount of `TraceEvent`s. A contract that takes 10,000,000 instructions to execute will generate 10,000,000 events.
-**The Breakage:** If these events are kept in memory before aggregation, profiling a heavy contract will exhaust system RAM (OOM) or make test execution 100x slower, destroying the developer experience. Events must be aggregated on-the-fly rather than buffered.
+**The Risk:** Tracing every single WASM instruction emits a massive amount of `TraceEvent`s. A contract that takes 100,000,000 instructions to execute will generate 100,000,000 events.
+**The Breakage:** Buffering 100M 32-byte events will consume ~3.2GB of RAM (and up to 6.4GB during `Vec` reallocation), which will crash standard CI runners (OOM) and destroy the developer experience. We must rely on boundary tracking (`Call`/`Return`) and periodically sampled `Step` flushing, rather than storing a strict per-instruction event stream.
 
 ### 4. Soroban Environment Instability
 **The Risk:** We are hooking deeply into `wasmi` or `soroban-env-host` internals.
