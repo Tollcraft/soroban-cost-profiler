@@ -1,12 +1,12 @@
 > [!IMPORTANT]
 > **System Directive: Mandatory Context Review**
 > Before proposing a solution or writing code, you MUST parse and strictly adhere to the constraints defined in the following state documents:
-> - `PRD.md`
-> - `ARCHITECTURE.md`
-> - `ARCHITECTURE_ESSENTIALS.md`
-> - `ROADMAP.md`
-> - `CONTRIBUTING.md`
-> - `AGENTS.md` / `CLAUDE.md`
+> - [`PRD.md`](https://github.com/Tollcraft/soroban-cost-profiler/blob/main/PRD.md)
+> - [`ARCHITECTURE.md`](https://github.com/Tollcraft/soroban-cost-profiler/blob/main/ARCHITECTURE.md)
+> - [`ARCHITECTURE_ESSENTIALS.md`](https://github.com/Tollcraft/soroban-cost-profiler/blob/main/ARCHITECTURE_ESSENTIALS.md)
+> - [`ROADMAP.md`](https://github.com/Tollcraft/soroban-cost-profiler/blob/main/ROADMAP.md)
+> - [`CONTRIBUTING.md`](https://github.com/Tollcraft/soroban-cost-profiler/blob/main/CONTRIBUTING.md)
+> - [`AGENTS.md`](https://github.com/Tollcraft/soroban-cost-profiler/blob/main/AGENTS.md) / [`CLAUDE.md`](https://github.com/Tollcraft/soroban-cost-profiler/blob/main/CLAUDE.md)
 > 
 > **Operating Constraints:** Do not extrapolate beyond the specified scope or rely on baseline assumptions. You must autonomously verify that the code passes all CI gates (`cargo check`, `cargo clippy`, `cargo test`) before marking this task as complete.
 
