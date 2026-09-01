@@ -2,7 +2,7 @@
   <h1>soroban-cost-profiler</h1>
   <p><strong>Visual flamegraphs and execution tracing for Soroban smart contracts</strong></p>
   <p>
-    <img src="https://img.shields.io/github/actions/workflow/status/Tollcraft/soroban-cost-profiler/build.yml?branch=main" alt="CI Status" />
+    <img src="https://img.shields.io/github/actions/workflow/status/Tollcraft/soroban-cost-profiler/ci.yml?branch=main" alt="CI Status" />
     <img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="License" />
   </p>
   <p>
