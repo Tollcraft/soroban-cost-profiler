@@ -120,3 +120,22 @@ When building this profiler, these are the critical technical risks most likely 
 ### 4. Soroban Environment Instability
 **The Risk:** We are hooking deeply into `wasmi` or `soroban-env-host` internals.
 **The Breakage:** If Stellar updates the Soroban host (e.g., swapping `wasmi` for `wasmtime`, altering the cost model logic, or changing the host function dispatch ABI), our internal tracing hooks will break completely and require a rewrite.
+
+---
+
+## 6. Edge Cases & Blind Spots
+
+### 1. Cross-Contract Calls (Multi-WASM Execution)
+If Contract A invokes Contract B, the execution engine switches to a completely different WASM binary. 
+**The Edge Case:** Our source mapper must be aware of the active `contract_id` and load/unload the correct DWARF debug info dynamically. If we just assume all WASM instructions map to Contract A's debug info, the flamegraph for Contract B's execution will map to random, incorrect lines in Contract A's source code.
+
+### 2. Panics and Traps
+If a contract panics (e.g., an `unwrap()` fails or it hits an out-of-bounds array access), the WASM engine abruptly halts.
+**The Edge Case:** We cannot wait for a clean "shutdown" event to build our tree. The profiler must be capable of flushing the current call stack and rendering the flamegraph up to the exact instruction of the panic, which is critical for debugging *why* a costly contract failed.
+
+### 3. Infinite Loops & Budget Exhaustion
+If a contract test enters an infinite loop, a standard test runner will eventually time out. 
+**The Edge Case:** The profiler will generate trace events endlessly, leading to an Out-Of-Memory (OOM) crash before the timeout. The tracer must enforce a hard execution limit (e.g., halting gracefully when it hits the Soroban network max of 100,000,000 instructions) and flush the trace.
+
+### 4. Rust Closures and Anonymous Types
+**The Edge Case:** Rust heavily utilizes closures, which compile down to deeply nested, anonymous types (e.g., `my_contract::foo::{{closure}}`). DWARF mappers often struggle to present these cleanly, leading to ugly, unreadable frame names in the flamegraph that frustrate developers.
