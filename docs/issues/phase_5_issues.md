@@ -69,3 +69,67 @@
 * **Simplified Task:** Create `docs/tutorial.md` walking a user through compiling a contract, running the profiler, and dropping the `.folded` file into Speedscope.
 * **Why it's independent:** Writing markdown documentation.
 * **Acceptance Criteria:** A complete, easy-to-follow tutorial exists.
+
+
+### Issue 24: [Phase 5] Wire `--fn` to actually invoke the target contract function
+* **Tags:** `feat`
+* **Simplified Task:** Parse `--fn` and use it to invoke the matching export.
+* **Acceptance Criteria:** CLI successfully executes the named function.
+
+### Issue 25: [Phase 5] Add `--metric cpu|memory|hostcalls` CLI flag
+* **Tags:** `feat`
+* **Simplified Task:** Add `--metric` flag to `Cli` and thread into the formatter.
+* **Acceptance Criteria:** Produces `.folded` files based on selected dimension.
+
+### Issue 26: [Phase 5] Print a colorized top-N hottest-functions summary
+* **Tags:** `feat`
+* **Simplified Task:** Print top 5 functions by exclusive cost to stdout.
+* **Acceptance Criteria:** Terminal shows readable ranked list.
+
+### Issue 27: [Phase 5] Validate numeric flags
+* **Tags:** `feat`, `bug`, `good first issue`
+* **Simplified Task:** Reject non-positive `--sample-rate` values.
+* **Acceptance Criteria:** Flag 0 returns descriptive error.
+
+### Issue 28: [Phase 5] Standardize CLI exit codes
+* **Tags:** `feat`, `chore`
+* **Simplified Task:** Define exit code conventions (0: success, 1: input error, 2: internal error).
+* **Acceptance Criteria:** Different errors return distinct codes.
+
+### Issue 29: [Phase 5] End-to-end CLI integration test against the fixture
+* **Tags:** `test`
+* **Simplified Task:** Run built CLI binary against `fixtures/dummy-contract`.
+* **Acceptance Criteria:** Produces valid `.folded` file natively.
+
+### Issue 30: [Phase 5] Add `--version` and richer `--help` metadata
+* **Tags:** `feat`, `good first issue`
+* **Simplified Task:** Add clap command metadata from `Cargo.toml`.
+* **Acceptance Criteria:** `--version` works.
+
+### Issue 31: [Phase 5] Warn when input WASM lacks debug info
+* **Tags:** `feat`
+* **Simplified Task:** Detect degraded SourceMapper state and print a CLI warning.
+* **Acceptance Criteria:** Stripped WASM triggers profile warning.
+
+### Issue 32: [Phase 5] Create `CONTRIBUTING.md`
+* **Tags:** `docs`, `good first issue`
+* **Simplified Task:** Write `CONTRIBUTING.md` covering workflow guidelines.
+* **Acceptance Criteria:** Document covers setup and PR expectations.
+
+### Issue 33: [Phase 5] Benchmark end-to-end profiler overhead vs. raw execution
+* **Tags:** `test`, `chore`
+* **Simplified Task:** Compare wall-clock time of CLI vs raw `cargo test` execution.
+* **Acceptance Criteria:** Reports a concrete multiplier overhead.
+
+### Issue 34: [Phase 5] Add a "Limitations" section to the README
+* **Tags:** `docs`, `good first issue`
+* **Simplified Task:** Summarize host-function and DWARF mapping risks in README.
+* **Acceptance Criteria:** Sets expectations about known tool ceilings.
+
+### Issue 35: [Phase 5] Support `--compare` for diffing two profile runs
+* **Tags:** `feat`, `architecture`
+* **Context:** Optimization Engineers need to prove a code change actually reduced cost, but the tool only profiles single runs.
+* **Simplified Task:** Add a `soroban-cost-profiler compare base.folded new.folded` subcommand that parses two outputs and prints the cost delta.
+* **Why it's independent:** Entirely new CLI mode for the Auditor/Optimization persona.
+* **Acceptance Criteria:** CLI outputs a readable diff of function cost changes.
+

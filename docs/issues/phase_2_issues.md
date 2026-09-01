@@ -131,3 +131,85 @@
 * **Simplified Task:** Create a `docs/internals/tracer_architecture.md` file explaining how `wasmi` intercepts instructions and how our buffer handles it.
 * **Why it's independent:** Writing markdown documentation.
 * **Acceptance Criteria:** The markdown file exists and explains the tracer mechanics.
+
+
+### Issue 21: [Phase 2] Scaffold the Mock Host Environment
+* **Tags:** `feat`, `architecture`
+* **Context:** We cannot link or instantiate the Soroban WASM module without the imported host functions (log, storage, crypto) actually existing in our mock `soroban_env_host::Host`.
+* **Simplified Task:** Scaffold a complete mock `Host` object that wires up the necessary import stubs so the WASM engine has something to link against.
+* **Why it's independent:** Foundational dependency for module instantiation.
+* **Acceptance Criteria:** A mock `Host` can be created and passed to the WASM engine without linking errors for standard SDK imports.
+
+### Issue 22: [Phase 2] Implement `instantiate_module` linking Soroban host imports
+* **Tags:** `feat`
+* **Context:** A parsed `wasmi::Module` isn't runnable until its imports are linked to concrete implementations.
+* **Simplified Task:** Write `instantiate_module` that links the module's imports against the scaffolded mock host (Issue 21).
+* **Why it's independent:** Builds directly on the mock host scaffolding.
+* **Acceptance Criteria:** A dummy contract module instantiates successfully.
+
+### Issue 23: [Phase 2] Implement `invoke_function` to call a named contract export
+* **Tags:** `feat`
+* **Simplified Task:** Write `invoke_function(instance, store, fn_name, args) -> Result<...>` that looks up the export and calls it.
+* **Why it's independent:** Pure `wasmi` invocation logic.
+* **Acceptance Criteria:** Calling `compute_heavy_loop` on the fixture executes and returns successfully.
+
+### Issue 24: [Phase 2] Track `mem_cost` during tracing
+* **Tags:** `feat`, `test`
+* **Simplified Task:** Extend `record_step`/`record_call` to accumulate a `mem_cost` delta (bytes allocated).
+* **Acceptance Criteria:** A unit test proves `mem_cost` accumulates independently of `cpu_cost`.
+
+### Issue 25: [Phase 2] Distinguish Host Function boundaries from WASM call boundaries
+* **Tags:** `feat`, `architecture`
+* **Simplified Task:** Add a `HostCall`/`HostReturn` variant to `EventType` and emit it when a WASM import trampoline is entered/exited.
+* **Acceptance Criteria:** A test shows a `HostCall` event is emitted on a mock log function.
+
+### Issue 26: [Phase 2] Wire `Budget::get_cost_tracker()` snapshots into host-boundary events
+* **Tags:** `feat`
+* **Simplified Task:** At each `HostReturn` event, snapshot the diff in `get_cost_tracker()` totals since the last snapshot.
+* **Acceptance Criteria:** Diffed cost values are attached to `HostReturn` events.
+
+### Issue 27: [Phase 2] Build a minimal mock ledger/env setup helper
+* **Tags:** `feat`, `test`
+* **Simplified Task:** Write a `setup_mock_env()` helper in test-support that configures a minimal ledger snapshot.
+* **Acceptance Criteria:** Produces a `Host` that can successfully invoke fixture functions.
+
+### Issue 28: [Phase 2] Enforce an instruction ceiling inside the tracer's hot loop
+* **Tags:** `feat`, `security`
+* **Simplified Task:** Add a `max_instructions: u64` field to `ExecutionTracer`; in `record_step`, halt once exceeded.
+* **Acceptance Criteria:** Tracer halts once the configured ceiling is exceeded.
+
+### Issue 29: [Phase 2] Integration test: fixture compile → tracer → raw event stream
+* **Tags:** `test`
+* **Simplified Task:** Write an integration test running `fixtures/dummy-contract` through the full tracer pipeline.
+* **Acceptance Criteria:** Test runs end-to-end and produces trace events without panicking.
+
+### Issue 30: [Phase 2] Benchmark tracer overhead
+* **Tags:** `test`, `chore`
+* **Simplified Task:** Add a `criterion` benchmark measuring events/sec throughput of `record_step`.
+* **Acceptance Criteria:** Running `cargo bench` produces throughput numbers.
+
+### Issue 31: [Phase 2] Stress-test recursive function calls
+* **Tags:** `test`
+* **Simplified Task:** Add `recursive_fibonacci` to dummy contract and assert stack bookkeeping.
+* **Acceptance Criteria:** Test passes for depth 20 without stack corruption.
+
+### Issue 32: [Phase 2] Reject malformed / non-Soroban WASM binaries gracefully
+* **Tags:** `feat`, `bug`
+* **Simplified Task:** Add validation returning descriptive errors for invalid WASM.
+* **Acceptance Criteria:** Feeding a garbage byte array returns `Result::Err`.
+
+### Issue 33: [Phase 2] Document Host vs. WASM call-boundary tracing
+* **Tags:** `docs`
+* **Simplified Task:** Create `docs/internals/host_function_boundary.md` explaining the `HostCall` limits.
+* **Acceptance Criteria:** Doc explains why host costs are opaque blocks.
+
+### Issue 34: [Phase 2] Add internal `tracing` crate logging
+* **Tags:** `chore`, `good first issue`
+* **Simplified Task:** Instrument key tracer methods with `debug!`/`warn!` spans.
+* **Acceptance Criteria:** `RUST_LOG=debug` shows tracer logs.
+
+### Issue 35: [Phase 2] CI job to build the WASM fixture as a cached artifact
+* **Tags:** `chore`
+* **Simplified Task:** Add a GitHub Actions job that runs `fixtures/build.sh` and caches it.
+* **Acceptance Criteria:** Workflow produces a downloadable `.wasm` artifact.
+

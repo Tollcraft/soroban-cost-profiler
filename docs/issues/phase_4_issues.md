@@ -69,3 +69,54 @@
 * **Simplified Task:** Create a `docs/internals/cost_math.md` file (or add it to `ARCHITECTURE.md`) explaining the difference with a simple diagram/example.
 * **Why it's independent:** Writing markdown documentation.
 * **Acceptance Criteria:** The difference is clearly explained for future contributors.
+
+
+### Issue 22: [Phase 4] Track exclusive/inclusive memory cost alongside CPU
+* **Tags:** `feat`, `test`
+* **Simplified Task:** Extend aggregation logic to accumulate and roll up `mem_cost`.
+* **Acceptance Criteria:** `inclusive_mem` correctly sums children's memory costs.
+
+### Issue 23: [Phase 4] Merge sibling calls to the same function (Preserve Recursion)
+* **Tags:** `feat`, `test`, `bug`
+* **Context:** A loop calling a function N times should merge into one sibling node, but true recursive calls (`fib -> fib`) must remain distinct to preserve stack depth.
+* **Simplified Task:** Update `push_frame` to sum costs if a *sibling* child with the same name exists, without merging recursive depth instances.
+* **Why it's independent:** Isolated fix to `Call` handling that avoids flamegraph corruption.
+* **Acceptance Criteria:** Sequential calls merge; recursive calls nest distinctly.
+
+### Issue 24: [Phase 4] Finalize partial trees from unmatched `Call` events
+* **Tags:** `feat`, `bug`
+* **Simplified Task:** Add `finalize(&mut self)` to pop still-open frames for panic-recovery.
+* **Acceptance Criteria:** Partial trace produces well-formed tree.
+
+### Issue 25: [Phase 4] Sanitize function names for the `.folded` format
+* **Tags:** `feat`, `bug`
+* **Simplified Task:** Escape or strip characters (`;`, whitespace) from function names in the formatter.
+* **Acceptance Criteria:** Names with semicolons parse correctly.
+
+### Issue 26: [Phase 4] Add `--metric` support: CPU, Memory, and Host-Calls
+* **Tags:** `feat`
+* **Context:** The formatter needs to emit outputs for all 3 PRD dimensions.
+* **Simplified Task:** Parametrize `to_collapsed_stack` with `CostMetric` (`Cpu`, `Memory`, `HostCalls`) to select which field to append.
+* **Why it's independent:** Plugs directly into the formatter.
+* **Acceptance Criteria:** Formatter successfully emits all 3 distinct cost dimensions.
+
+### Issue 27: [Phase 4] Deterministic child ordering in formatted output
+* **Tags:** `feat`, `test`
+* **Simplified Task:** Sort children by function name/cost before writing out.
+* **Acceptance Criteria:** Identical traces produce byte-identical files.
+
+### Issue 28: [Phase 4] Represent host-function costs as opaque tree nodes
+* **Tags:** `feat`
+* **Simplified Task:** Insert child nodes labeled `[host: <CostType>]` for host boundaries.
+* **Acceptance Criteria:** Host costs appear explicitly in the tree.
+
+### Issue 29: [Phase 4] Full pipeline integration test (events → tree → `.folded` string)
+* **Tags:** `test`
+* **Simplified Task:** Test full aggregation pipeline end-to-end.
+* **Acceptance Criteria:** Asserts a specific `.folded` string for synthetic input.
+
+### Issue 30: [Phase 4] Document formatting conventions
+* **Tags:** `docs`, `good first issue`
+* **Simplified Task:** Update folded stack spec doc with metric-specific examples.
+* **Acceptance Criteria:** Spec doc shows memory and host-call examples.
+

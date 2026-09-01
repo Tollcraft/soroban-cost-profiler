@@ -83,3 +83,62 @@
 * **Simplified Task:** Create `docs/internals/dwarf_mapping.md` explaining how `addr2line` translates WASM addresses to Rust source code.
 * **Why it's independent:** Writing markdown documentation.
 * **Acceptance Criteria:** The markdown file exists and explains the DWARF resolution process.
+
+
+### Issue 22: [Phase 3] Translate `wasmi` PC to static WASM module offset
+* **Tags:** `feat`, `architecture`, `bug`
+* **Context:** DWARF line tables use code-section-relative addresses, not the raw program counters that `wasmi` produces at runtime.
+* **Simplified Task:** Add a translation step in the resolver that maps the dynamic `wasmi` PC back to the static WASM module offset before querying `addr2line`.
+* **Why it's independent:** Core correctness fix required before any DWARF mapping works reliably.
+* **Acceptance Criteria:** A test confirms a raw `wasmi` PC is correctly offset-adjusted before DWARF resolution.
+
+### Issue 23: [Phase 3] Implement Rust symbol demangling
+* **Tags:** `feat`, `good first issue`
+* **Simplified Task:** Add `rustc-demangle` to clean up function names in `SourceFrame`.
+* **Acceptance Criteria:** Mangled symbol resolves to a clean `my_contract::swap`-style name.
+
+### Issue 24: [Phase 3] Clean up closure and anonymous-type frame names
+* **Tags:** `feat`
+* **Simplified Task:** Post-process demangled names to collapse nested `{{closure}}` segments.
+* **Acceptance Criteria:** Nested closure symbol renders in a readable format.
+
+### Issue 25: [Phase 3] Resolve inlined frames via `addr2line`'s inline iterator
+* **Tags:** `feat`, `architecture`
+* **Simplified Task:** Update `resolve(pc)` to return `Vec<SourceFrame>` using `addr2line::Context::find_frames`.
+* **Acceptance Criteria:** Inlined call site returns multiple frames in order.
+
+### Issue 26: [Phase 3] Implement WASM `name` section fallback parser
+* **Tags:** `feat`
+* **Simplified Task:** Implement `resolve_from_name_section(pc)` returning function-name-only frames.
+* **Acceptance Criteria:** Resolves function names on stripped WASM binaries.
+
+### Issue 27: [Phase 3] Add PC-resolution caching
+* **Tags:** `feat`, `test`
+* **Simplified Task:** Add an LRU or HashMap cache inside `SourceMapper::resolve`.
+* **Acceptance Criteria:** Repeated lookups are significantly faster.
+
+### Issue 28: [Phase 3] Support multiple DWARF contexts keyed by `contract_id`
+* **Tags:** `feat`, `architecture`
+* **Simplified Task:** Dispatch `resolve(contract_id, pc)` to the correct contract's mapped DWARF table.
+* **Acceptance Criteria:** Resolves correctly across multi-contract traces.
+
+### Issue 29: [Phase 3] Integration test: fixture with `line-tables-only` resolves correctly
+* **Tags:** `test`
+* **Simplified Task:** Write a test asserting a known function's PC resolves to the correct line in the fixture.
+* **Acceptance Criteria:** Passes against real compiled fixture.
+
+### Issue 30: [Phase 3] Benchmark address-resolution throughput
+* **Tags:** `test`, `chore`
+* **Simplified Task:** Add a benchmark for PC resolution (cached vs uncached).
+* **Acceptance Criteria:** Reports resolutions/sec.
+
+### Issue 31: [Phase 3] Detect and warn on heavily mangled line mappings
+* **Tags:** `feat`
+* **Simplified Task:** Compute ratio of PCs mapping to duplicate/`None` lines; emit warning if high.
+* **Acceptance Criteria:** Triggers warning on artificially degenerate mappings.
+
+### Issue 32: [Phase 3] Document the fallback resolution order
+* **Tags:** `docs`
+* **Simplified Task:** Update docs with DWARF -> name section -> function index precedence.
+* **Acceptance Criteria:** Fallback chain is clearly diagrammed.
+
