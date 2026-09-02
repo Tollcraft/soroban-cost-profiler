@@ -14,3 +14,5 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+soroban-env-host = "28.0.2"
+wasmi = "2.0.0"
