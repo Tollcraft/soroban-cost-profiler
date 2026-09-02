@@ -1,3 +1,13 @@
+[workspace]
+members = [".", "fixtures/dummy-contract"]
+resolver = "2"
+
+[patch.crates-io]
+# Force the whole workspace (including soroban-env-host) to use ed25519-dalek 2.1.1.
+# The crates.io resolver otherwise picks 3.0.x for soroban-env-host, whose rand_core
+# traits are incompatible with soroban-env-host's testutils code.
+ed25519-dalek = { path = "vendor/ed25519-dalek-2.1.1" }
+
 [package]
 name = "soroban-cost-profiler"
 version = "0.1.0"
