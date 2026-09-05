@@ -11,7 +11,7 @@
 
 ## Phase 2: Execution Tracing (In Progress 🚧)
 - [x] **SPIKE:** Investigate `soroban-env-host` Budget API limitations.
-- [ ] **WASM Engine Setup:** Import `soroban-env-host` and `wasmi` as dependencies.
+- [x] **WASM Engine Setup:** Import `soroban-env-host` and `wasmi` as dependencies.
 - [x] **Fixture Compilation:** Add a `fixtures/dummy-contract` Soroban contract with a `compute_heavy_loop` function and workspace integration.
 - [ ] **Tracer Hooks:** Implement the `wasmi` execution hooks in `src/tracer.rs` to intercept instructions.
 - [ ] **Instruction Counting:** Accurately measure and record CPU cost and `pc` at every step.
@@ -32,3 +32,4 @@
 - [ ] **Panic Handling:** Ensure the aggregator flushes and formats the trace even if the contract panics mid-execution.
 - [ ] **Infinite Loop Protection:** Enforce a hard ceiling (e.g. 100M instructions) to halt tracing and prevent OOM crashes.
 - [ ] **Documentation:** Update README with usage examples and CLI flag details.
+

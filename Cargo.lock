@@ -1300,6 +1300,10 @@ dependencies = [
 [[package]]
 name = "soroban-cost-profiler"
 version = "0.1.0"
+dependencies = [
+ "soroban-env-host",
+ "wasmi",
+]
 
 [[package]]
 name = "soroban-env-common"
@@ -1710,6 +1714,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7ef64dbcc55df09c7e5a46182d181c2cfa3e925f3da937ea764728b4bbb9dcbf"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "wasmi"
+version = "0.31.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "77a8281d1d660cdf54c76a3efa9ddd0c270cada1383a995db3ccb43d166456c7"
+dependencies = [
+ "smallvec",
+ "spin",
+ "wasmi_arena",
+ "wasmi_core",
+ "wasmparser-nostd",
 ]
 
 [[package]]
