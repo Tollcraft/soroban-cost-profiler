@@ -13,3 +13,7 @@ If you implement a feature, check its box in `ROADMAP.md`. If you start a new ph
 1. Fork the repository and ensure you are working against the `main` branch.
 2. Make sure you read `ARCHITECTURE_ESSENTIALS.md` to understand the zero-instrumentation constraint.
 3. Submit your PR and include the `ROADMAP.md` update!
+
+## Code Quality Standards
+
+Before submitting a PR, ensure your code meets our quality standards. Please run the appropriate formatters, linters, and tests for this repository.
