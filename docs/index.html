@@ -1,159 +1,1439 @@
 <!DOCTYPE html>
-<html lang="en" class="scroll-smooth">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Tollcraft | Soroban Cost Awareness</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <script>
-        tailwind.config = {
-            theme: {
-                extend: {
-                    fontFamily: {
-                        sans: ['Inter', 'sans-serif'],
-                    },
-                    colors: {
-                        brand: {
-                            50: '#f0f9ff',
-                            100: '#e0f2fe',
-                            400: '#38bdf8',
-                            500: '#0ea5e9',
-                            600: '#0284c7',
-                            900: '#0c4a6e',
-                        }
-                    }
-                }
-            }
-        }
-    </script>
+    <title>Tollcraft — Soroban Cost Awareness</title>
+    <meta name="description" content="A three-tier cost awareness pipeline for Stellar smart contracts. Lint at compile time, assert at test time, profile when the budget fails.">
+    <meta property="og:title" content="Tollcraft — Soroban Cost Awareness">
+    <meta property="og:description" content="Prevent, detect, and diagnose Soroban execution costs before mainnet.">
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;700;900&family=Instrument+Sans:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+
     <style>
+        /* ============================================================
+           TOKENS
+           ============================================================ */
+        :root {
+            --void:        #07050d;
+            --void-2:      #0c0a16;
+            --paper:       #f4f1ff;
+            --muted:       #a9a1c6;
+            --faint:       #6f6790;
+
+            --cyan:        #22d3ee;
+            --violet:      #8b5cf6;
+            --magenta:     #e879f9;
+            --amber:       #fbbf24;
+
+            --t1:          #22d3ee;   /* linter  — prevent  */
+            --t2:          #e879f9;   /* assert  — detect   */
+            --t3:          #fbbf24;   /* profiler— diagnose */
+
+            --font-display: "Unbounded", sans-serif;
+            --font-body:    "Instrument Sans", sans-serif;
+            --font-mono:    "JetBrains Mono", monospace;
+
+            --radius-lg: 22px;
+            --radius-md: 14px;
+            --ease-out: cubic-bezier(.22, 1, .36, 1);
+            --nav-h: 72px;
+        }
+
+        /* ============================================================
+           RESET / BASE
+           ============================================================ */
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        html { scroll-behavior: smooth; }
+
         body {
-            background-color: #0f172a;
-            color: #f8fafc;
+            font-family: var(--font-body);
+            background: var(--void);
+            color: var(--paper);
+            line-height: 1.6;
+            overflow-x: hidden;
+            -webkit-font-smoothing: antialiased;
         }
-        .gradient-text {
-            background: linear-gradient(135deg, #38bdf8 0%, #818cf8 100%);
+
+        ::selection { background: var(--violet); color: var(--paper); }
+
+        a { color: inherit; }
+
+        img, svg { display: block; }
+
+        :focus-visible {
+            outline: 2px solid var(--cyan);
+            outline-offset: 3px;
+            border-radius: 4px;
+        }
+
+        .wrap {
+            width: min(1200px, 92%);
+            margin-inline: auto;
+        }
+
+        /* ============================================================
+           BACKGROUND LAYERS — mesh, grid, noise
+           ============================================================ */
+        .bg {
+            position: fixed;
+            inset: 0;
+            z-index: -3;
+            overflow: hidden;
+            background: var(--void);
+        }
+
+        /* slow-drifting gradient mesh */
+        .bg__mesh {
+            position: absolute;
+            inset: -20%;
+            filter: blur(110px);
+            opacity: .55;
+            animation: mesh-drift 26s var(--ease-out) infinite alternate;
+        }
+        .bg__mesh::before,
+        .bg__mesh::after {
+            content: "";
+            position: absolute;
+            width: 52vw;
+            height: 52vw;
+            border-radius: 50%;
+            mix-blend-mode: screen;
+        }
+        .bg__mesh::before {
+            top: -18vw;
+            left: -12vw;
+            background: radial-gradient(circle, var(--violet) 0%, transparent 65%);
+            opacity: .5;
+        }
+        .bg__mesh::after {
+            bottom: -22vw;
+            right: -14vw;
+            background: radial-gradient(circle, var(--cyan) 0%, transparent 62%);
+            opacity: .35;
+        }
+        @keyframes mesh-drift {
+            0%   { transform: translate3d(0, 0, 0) scale(1); }
+            50%  { transform: translate3d(-3%, 4%, 0) scale(1.08); }
+            100% { transform: translate3d(4%, -3%, 0) scale(1.02); }
+        }
+
+        /* blueprint grid — masked so it fades out downward */
+        .bg__grid {
+            position: absolute;
+            inset: 0;
+            background-image:
+                linear-gradient(rgba(244, 241, 255, .05) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(244, 241, 255, .05) 1px, transparent 1px);
+            background-size: 76px 76px;
+            mask-image: radial-gradient(ellipse 90% 70% at 30% 0%, black 30%, transparent 78%);
+            -webkit-mask-image: radial-gradient(ellipse 90% 70% at 30% 0%, black 30%, transparent 78%);
+        }
+
+        /* film-grain noise */
+        .bg__noise {
+            position: absolute;
+            inset: 0;
+            opacity: .05;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+        }
+
+        /* ============================================================
+           NAV
+           ============================================================ */
+        .nav {
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            height: var(--nav-h);
+            display: flex;
+            align-items: center;
+            background: rgba(7, 5, 13, .72);
+            backdrop-filter: blur(14px);
+            -webkit-backdrop-filter: blur(14px);
+            border-bottom: 1px solid rgba(244, 241, 255, .08);
+        }
+        .nav__inner {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 24px;
+        }
+        .nav__brand {
+            font-family: var(--font-display);
+            font-weight: 700;
+            font-size: 1.05rem;
+            letter-spacing: .01em;
+            text-decoration: none;
+            display: flex;
+            align-items: baseline;
+            gap: 6px;
+        }
+        .nav__brand .dot {
+            color: var(--magenta);
+        }
+        .nav__tag {
+            font-family: var(--font-mono);
+            font-size: .62rem;
+            color: var(--faint);
+            letter-spacing: .08em;
+        }
+        .nav__links {
+            display: flex;
+            align-items: center;
+            gap: 28px;
+        }
+        .nav__links a {
+            text-decoration: none;
+            color: var(--muted);
+            font-size: .95rem;
+            transition: color .2s;
+        }
+        .nav__links a:hover { color: var(--paper); }
+        .nav__cta {
+            font-family: var(--font-mono);
+            font-size: .78rem;
+            color: var(--paper);
+            padding: 8px 16px;
+            border: 1px solid rgba(139, 92, 246, .5);
+            border-radius: 999px;
+            background: rgba(139, 92, 246, .14);
+            transition: background .2s, border-color .2s, box-shadow .2s;
+        }
+        .nav__cta:hover {
+            background: rgba(139, 92, 246, .28);
+            border-color: var(--violet);
+            box-shadow: 0 0 22px rgba(139, 92, 246, .35);
+        }
+
+        /* ============================================================
+           HERO — asymmetric split, terminal panel breaks the grid
+           ============================================================ */
+        .hero {
+            position: relative;
+            padding: clamp(56px, 9vw, 110px) 0 0;
+        }
+        .hero__grid {
+            display: grid;
+            grid-template-columns: 1.15fr .85fr;
+            gap: clamp(32px, 5vw, 72px);
+            align-items: start;
+        }
+
+        .hero__kicker {
+            font-family: var(--font-mono);
+            font-size: .8rem;
+            color: var(--muted);
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 26px;
+        }
+        .hero__kicker .pulse {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--t1);
+            box-shadow: 0 0 0 0 rgba(34, 211, 238, .6);
+            animation: pulse 2.4s infinite;
+        }
+        @keyframes pulse {
+            0%   { box-shadow: 0 0 0 0 rgba(34, 211, 238, .55); }
+            70%  { box-shadow: 0 0 0 9px rgba(34, 211, 238, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(34, 211, 238, 0); }
+        }
+
+        .hero__title {
+            font-family: var(--font-display);
+            font-weight: 900;
+            font-size: clamp(2.4rem, 5.6vw, 4.3rem);
+            line-height: 1.04;
+            letter-spacing: -.015em;
+            text-wrap: balance;
+        }
+        .hero__title .grad {
+            background: linear-gradient(92deg, var(--cyan) 0%, var(--violet) 48%, var(--magenta) 100%);
             -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            color: transparent;
+            display: block;
+            padding-bottom: .08em;
         }
-        .card-hover {
-            transition: all 0.3s ease;
+
+        .hero__sub {
+            margin-top: 26px;
+            max-width: 30em;
+            color: var(--muted);
+            font-size: clamp(1.02rem, 1.5vw, 1.18rem);
+            line-height: 1.65;
         }
-        .card-hover:hover {
-            transform: translateY(-5px);
-            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 10px 10px -5px rgba(0, 0, 0, 0.3);
-            border-color: #38bdf8;
+        .hero__sub strong { color: var(--paper); font-weight: 600; }
+
+        .hero__ctas {
+            margin-top: 38px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 16px;
+        }
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            font-weight: 600;
+            font-size: 1rem;
+            padding: 14px 26px;
+            border-radius: 999px;
+            text-decoration: none;
+            transition: transform .25s var(--ease-out), box-shadow .25s, background .2s, border-color .2s;
+        }
+        .btn svg { transition: transform .25s var(--ease-out); }
+        .btn:hover svg { transform: translateY(2px); }
+        .btn--primary {
+            background: linear-gradient(92deg, var(--violet), var(--magenta));
+            color: var(--paper);
+            box-shadow: 0 8px 30px rgba(139, 92, 246, .35);
+        }
+        .btn--primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 14px 44px rgba(139, 92, 246, .5);
+        }
+        .btn--ghost {
+            border: 1px solid rgba(244, 241, 255, .18);
+            color: var(--paper);
+            background: rgba(244, 241, 255, .03);
+        }
+        .btn--ghost:hover {
+            transform: translateY(-2px);
+            border-color: rgba(244, 241, 255, .4);
+            background: rgba(244, 241, 255, .07);
+        }
+
+        .hero__foot {
+            margin-top: 44px;
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 12px 22px;
+            font-family: var(--font-mono);
+            font-size: .72rem;
+            color: var(--faint);
+            letter-spacing: .06em;
+        }
+        .hero__foot span { display: inline-flex; align-items: center; gap: 8px; }
+        .hero__foot i { font-style: normal; color: var(--t2); }
+
+        /* ---- terminal panel (right) ---- */
+        .hero__panel {
+            position: relative;
+            margin-top: 8px;
+            transform: translateY(56px) rotate(1.2deg);
+            animation: panel-in 1s var(--ease-out) .5s both;
+        }
+        @keyframes panel-in {
+            from { opacity: 0; transform: translateY(120px) rotate(2.4deg) scale(.96); }
+            to   { opacity: 1; transform: translateY(56px) rotate(1.2deg) scale(1); }
+        }
+        .term {
+            border: 1px solid rgba(244, 241, 255, .12);
+            border-radius: var(--radius-lg);
+            background: linear-gradient(160deg, rgba(20, 15, 40, .85), rgba(10, 8, 22, .9));
+            box-shadow: 0 30px 80px rgba(0, 0, 0, .55), 0 0 0 1px rgba(139, 92, 246, .12), 0 0 60px rgba(139, 92, 246, .18);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            overflow: hidden;
+        }
+        .term__bar {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 14px 18px;
+            border-bottom: 1px solid rgba(244, 241, 255, .08);
+        }
+        .term__bar .lights { display: flex; gap: 7px; }
+        .term__bar .lights span {
+            width: 10px; height: 10px; border-radius: 50%;
+        }
+        .term__bar .lights span:nth-child(1) { background: #ff5f57; }
+        .term__bar .lights span:nth-child(2) { background: #febc2e; }
+        .term__bar .lights span:nth-child(3) { background: #28c840; }
+        .term__bar .path {
+            margin-left: 10px;
+            font-family: var(--font-mono);
+            font-size: .72rem;
+            color: var(--faint);
+            letter-spacing: .04em;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .term__rerun {
+            margin-left: auto;
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            font-family: var(--font-mono);
+            font-size: .68rem;
+            letter-spacing: .05em;
+            color: var(--muted);
+            background: rgba(244, 241, 255, .05);
+            border: 1px solid rgba(244, 241, 255, .12);
+            border-radius: 999px;
+            padding: 6px 12px;
+            cursor: pointer;
+            transition: color .2s, border-color .2s, box-shadow .2s;
+        }
+        .term__rerun:hover { color: var(--paper); border-color: var(--t1); box-shadow: 0 0 14px rgba(34, 211, 238, .25); }
+        .term__rerun.is-running { color: var(--t1); }
+        .term__rerun.is-running svg { animation: spin 1s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        .term__detail {
+            margin-top: 18px;
+            padding-top: 12px;
+            border-top: 1px solid rgba(244, 241, 255, .08);
+            font-family: var(--font-mono);
+            font-size: .7rem;
+            color: var(--faint);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            min-height: 22px;
+        }
+        .term__detail .ctx {
+            color: var(--muted);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .term__detail .ctx b { color: var(--paper); font-weight: 500; }
+        .term__detail .reset {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-family: var(--font-mono);
+            font-size: .66rem;
+            letter-spacing: .05em;
+            color: var(--t1);
+            background: none;
+            border: none;
+            cursor: pointer;
+            padding: 4px 8px;
+            border-radius: 6px;
+            white-space: nowrap;
+            transition: color .2s, background .2s;
+        }
+        .term__detail .reset:hover { color: var(--paper); background: rgba(34, 211, 238, .12); }
+        .term__detail .reset[hidden] { display: none; }
+
+        .term__hint {
+            margin-top: 10px;
+            font-family: var(--font-mono);
+            font-size: .64rem;
+            letter-spacing: .08em;
+            color: var(--faint);
+            opacity: 0;
+            transition: opacity .8s;
+        }
+        .term__hint.is-on { opacity: .85; }
+        .term__body {
+            padding: 20px 22px 24px;
+            font-family: var(--font-mono);
+            font-size: .8rem;
+            line-height: 1.75;
+            color: #cfc8ea;
+        }
+        .term__body .cmd { color: var(--paper); }
+        .term__body .cmd::before { content: "$ "; color: var(--t1); }
+        .term__body .ok { color: var(--t3); }
+        .term__body .dim { color: var(--faint); }
+        .term__body .line { white-space: pre; }
+
+        .term__stat {
+            margin-top: 16px;
+            display: grid;
+            grid-template-columns: auto 1fr;
+            gap: 4px 18px;
+            align-items: baseline;
+        }
+        .term__stat .num {
+            font-family: var(--font-display);
+            font-weight: 700;
+            font-size: 1.05rem;
+            color: var(--paper);
+            text-align: right;
+        }
+        .term__stat .lbl { font-size: .72rem; color: var(--faint); }
+
+        .term__flame {
+            margin-top: 22px;
+            display: flex;
+            flex-direction: column;
+            gap: 9px;
+        }
+        .flame {
+            display: grid;
+            grid-template-columns: 118px 1fr 42px;
+            align-items: center;
+            gap: 12px;
+            font-size: .7rem;
+        }
+        .flame .name {
+            color: var(--muted);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .flame .bar {
+            height: 16px;
+            border-radius: 5px;
+            width: 0;
+            transition: width .9s var(--ease-out), filter .25s, box-shadow .25s;
+            cursor: pointer;
+        }
+        .flame .pct { color: var(--faint); text-align: right; transition: color .2s; }
+        .flame--1 .bar { background: linear-gradient(90deg, var(--cyan), var(--violet)); }
+        .flame--2 .bar { background: linear-gradient(90deg, var(--violet), var(--magenta)); }
+        .flame--3 .bar { background: linear-gradient(90deg, var(--magenta), #ff8fab); }
+        .flame--4 .bar { background: rgba(244, 241, 255, .18); }
+        .flame:hover .name, .flame:focus-visible .name { color: var(--paper); }
+        .flame:hover .bar, .flame:focus-visible .bar {
+            filter: brightness(1.35);
+            box-shadow: 0 0 12px rgba(244, 241, 255, .3);
+        }
+        .flame.is-dim { opacity: .35; }
+        .flame--child .name { padding-left: 16px; }
+        .term.is-booting .bar { transition: none; }
+
+        /* floating chips around the panel */
+        .chip {
+            position: absolute;
+            z-index: 2;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            font-family: var(--font-mono);
+            font-size: .68rem;
+            letter-spacing: .05em;
+            padding: 9px 14px;
+            border-radius: 999px;
+            border: 1px solid rgba(244, 241, 255, .16);
+            background: rgba(12, 10, 22, .82);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, .4);
+            animation: floaty 5s ease-in-out infinite;
+        }
+        .chip .swatch { width: 8px; height: 8px; border-radius: 50%; }
+        .chip--a {
+            top: -20px;
+            left: -34px;
+            color: var(--t1);
+            animation-delay: .4s;
+        }
+        .chip--a .swatch { background: var(--t1); box-shadow: 0 0 10px var(--t1); }
+        .chip--b {
+            bottom: 64px;
+            right: -26px;
+            color: var(--t3);
+            animation-delay: 1.2s;
+        }
+        .chip--b .swatch { background: var(--t3); box-shadow: 0 0 10px var(--t3); }
+        @keyframes floaty {
+            0%, 100% { transform: translateY(0); }
+            50%      { transform: translateY(-9px); }
+        }
+
+        /* ============================================================
+           MARQUEE TICKER
+           ============================================================ */
+        .marq {
+            margin-top: clamp(120px, 16vw, 190px);
+            border-top: 1px solid rgba(244, 241, 255, .07);
+            border-bottom: 1px solid rgba(244, 241, 255, .07);
+            background: rgba(12, 10, 22, .55);
+            overflow: hidden;
+            padding: 15px 0;
+            transform: rotate(-1deg) scale(1.03);
+        }
+        .marq__track {
+            display: flex;
+            gap: 56px;
+            width: max-content;
+            animation: marquee 34s linear infinite;
+        }
+        .marq:hover .marq__track { animation-play-state: paused; }
+        .marq__track span {
+            font-family: var(--font-mono);
+            font-size: .78rem;
+            color: var(--faint);
+            letter-spacing: .12em;
+            white-space: nowrap;
+        }
+        .marq__track span::after { content: " /"; color: var(--violet); }
+        @keyframes marquee {
+            from { transform: translateX(0); }
+            to   { transform: translateX(-50%); }
+        }
+
+        /* ============================================================
+           PIPELINE — asymmetric diagonal flow
+           ============================================================ */
+        .pipeline {
+            position: relative;
+            padding: clamp(90px, 12vw, 150px) 0 clamp(70px, 9vw, 120px);
+        }
+        .pipeline::before {
+            content: "";
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 240px;
+            background: linear-gradient(180deg, rgba(12, 10, 22, .7), transparent);
+            pointer-events: none;
+        }
+        .pipeline__head {
+            display: grid;
+            grid-template-columns: 1fr auto;
+            align-items: end;
+            gap: 40px;
+            margin-bottom: clamp(64px, 8vw, 96px);
+        }
+        .pipeline__label {
+            font-family: var(--font-mono);
+            font-size: .78rem;
+            color: var(--t2);
+            letter-spacing: .1em;
+            margin-bottom: 14px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .pipeline__label::before {
+            content: "";
+            width: 34px;
+            height: 1px;
+            background: linear-gradient(90deg, var(--t2), transparent);
+        }
+        .pipeline__title {
+            font-family: var(--font-display);
+            font-weight: 700;
+            font-size: clamp(1.9rem, 4vw, 3.1rem);
+            line-height: 1.1;
+            letter-spacing: -.01em;
+            text-wrap: balance;
+            max-width: 14em;
+        }
+        .pipeline__title em {
+            font-style: normal;
+            color: var(--t1);
+        }
+        .pipeline__blurb {
+            max-width: 30em;
+            color: var(--muted);
+            font-size: 1.02rem;
+            line-height: 1.7;
+            padding-bottom: 6px;
+        }
+        .pipeline__blurb strong { color: var(--paper); font-weight: 600; }
+
+        /* dashed beam connecting the tiers */
+        .beam {
+            position: absolute;
+            top: 52%;
+            left: 4%;
+            right: 4%;
+            height: 2px;
+            background: repeating-linear-gradient(90deg, rgba(139, 92, 246, .4) 0 12px, transparent 12px 26px);
+            transform: rotate(-2.4deg);
+            opacity: .5;
+            pointer-events: none;
+        }
+
+        .tiers {
+            position: relative;
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: clamp(28px, 3.4vw, 44px);
+            align-items: start;
+        }
+        .tier {
+            position: relative;
+            border-radius: var(--radius-lg);
+            padding: 34px 30px 30px;
+            background: linear-gradient(165deg, rgba(20, 16, 40, .78), rgba(10, 8, 22, .85));
+            border: 1px solid rgba(244, 241, 255, .1);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            overflow: hidden;
+            text-decoration: none;
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
+            transition: transform .3s var(--ease-out), border-color .3s, box-shadow .3s;
+        }
+        .tier:hover {
+            transform: translateY(-8px);
+            border-color: var(--tier-c, var(--violet));
+            box-shadow: 0 24px 60px rgba(0, 0, 0, .5), 0 0 50px color-mix(in srgb, var(--tier-c, var(--violet)) 22%, transparent);
+        }
+        .tier--1 { --tier-c: var(--t1); transform: rotate(-1.2deg) translateY(14px); }
+        .tier--2 { --tier-c: var(--t2); transform: translateY(-26px) rotate(.8deg); }
+        .tier--3 { --tier-c: var(--t3); transform: translateY(6px) rotate(-.6deg); }
+        .tier:hover.tier--1, .tier:hover.tier--2, .tier:hover.tier--3 { transform: translateY(-8px); }
+        .tier--2:hover { transform: translateY(-34px); }
+
+        .tier__ghost {
+            position: absolute;
+            top: -26px;
+            right: -8px;
+            font-family: var(--font-display);
+            font-weight: 900;
+            font-size: 6.4rem;
+            line-height: 1;
+            color: color-mix(in srgb, var(--tier-c) 16%, transparent);
+            pointer-events: none;
+            user-select: none;
+        }
+        .tier__icon {
+            width: 46px;
+            height: 46px;
+            border-radius: 13px;
+            display: grid;
+            place-items: center;
+            border: 1px solid color-mix(in srgb, var(--tier-c) 45%, transparent);
+            background: color-mix(in srgb, var(--tier-c) 14%, transparent);
+            color: var(--tier-c);
+            position: relative;
+            z-index: 1;
+        }
+        .tier__step {
+            font-family: var(--font-mono);
+            font-size: .74rem;
+            letter-spacing: .12em;
+            color: var(--tier-c);
+            text-transform: lowercase;
+            position: relative;
+            z-index: 1;
+        }
+        .tier__name {
+            font-family: var(--font-display);
+            font-weight: 700;
+            font-size: 1.34rem;
+            letter-spacing: -.01em;
+            color: var(--paper);
+            position: relative;
+            z-index: 1;
+        }
+        .tier__desc {
+            color: var(--muted);
+            font-size: .96rem;
+            line-height: 1.65;
+            flex-grow: 1;
+            position: relative;
+            z-index: 1;
+        }
+        .tier__desc code {
+            font-family: var(--font-mono);
+            font-size: .84em;
+            color: var(--paper);
+            background: rgba(244, 241, 255, .07);
+            padding: 2px 6px;
+            border-radius: 5px;
+        }
+        .tier__link {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            font-weight: 600;
+            font-size: .95rem;
+            color: var(--tier-c);
+            position: relative;
+            z-index: 1;
+            width: fit-content;
+        }
+        .tier__link svg { transition: transform .25s var(--ease-out); }
+        .tier:hover .tier__link svg { transform: translate(4px, -2px); }
+
+        /* ============================================================
+           FLOW STRIP
+           ============================================================ */
+        .flow {
+            position: relative;
+            padding: clamp(50px, 7vw, 90px) 0;
+            overflow: hidden;
+        }
+        .flow__inner {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: clamp(20px, 3vw, 40px);
+            border-top: 1px solid rgba(244, 241, 255, .08);
+            padding-top: clamp(34px, 4vw, 52px);
+        }
+        .flow__item .when {
+            font-family: var(--font-mono);
+            font-size: .74rem;
+            letter-spacing: .1em;
+            color: var(--faint);
+            display: block;
+            margin-bottom: 8px;
+        }
+        .flow__item h3 {
+            font-family: var(--font-display);
+            font-weight: 600;
+            font-size: 1.12rem;
+            color: var(--paper);
+            margin-bottom: 8px;
+        }
+        .flow__item p {
+            color: var(--muted);
+            font-size: .94rem;
+            line-height: 1.6;
+            max-width: 24em;
+        }
+        .flow__item--1 h3 { color: var(--t1); }
+        .flow__item--2 h3 { color: var(--t2); }
+        .flow__item--3 h3 { color: var(--t3); }
+
+        /* ============================================================
+           FOOTER
+           ============================================================ */
+        .footer {
+            position: relative;
+            border-top: 1px solid rgba(244, 241, 255, .08);
+            padding: clamp(60px, 8vw, 100px) 0 44px;
+            overflow: hidden;
+        }
+        .footer__grid {
+            display: grid;
+            grid-template-columns: 1.4fr 1fr;
+            gap: 48px;
+            align-items: start;
+        }
+        .footer__wordmark {
+            font-family: var(--font-display);
+            font-weight: 900;
+            font-size: clamp(2.6rem, 7vw, 5rem);
+            line-height: .95;
+            letter-spacing: -.02em;
+            background: linear-gradient(92deg, var(--paper) 30%, var(--faint) 100%);
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+        }
+        .footer__wordmark .dot { color: var(--magenta); -webkit-text-fill-color: var(--magenta); }
+        .footer__tag {
+            margin-top: 18px;
+            color: var(--muted);
+            font-size: 1rem;
+            max-width: 26em;
+        }
+        .footer__links {
+            display: grid;
+            gap: 12px;
+            justify-items: start;
+        }
+        .footer__links a {
+            text-decoration: none;
+            color: var(--muted);
+            font-size: .96rem;
+            transition: color .2s, transform .2s var(--ease-out);
+        }
+        .footer__links a:hover { color: var(--paper); transform: translateX(4px); }
+        .footer__bottom {
+            margin-top: 64px;
+            padding-top: 26px;
+            border-top: 1px solid rgba(244, 241, 255, .07);
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: space-between;
+            gap: 12px;
+            font-family: var(--font-mono);
+            font-size: .72rem;
+            color: var(--faint);
+            letter-spacing: .06em;
+        }
+
+        /* ============================================================
+           SCROLL REVEALS
+           ============================================================ */
+        .js .rv {
+            opacity: 0;
+            transform: translateY(34px);
+            transition: opacity .8s var(--ease-out), transform .8s var(--ease-out);
+        }
+        .js .rv.is-in { opacity: 1; transform: none; }
+        .rv--1 { transition-delay: .08s; }
+        .rv--2 { transition-delay: .18s; }
+        .rv--3 { transition-delay: .28s; }
+
+        /* ============================================================
+           RESPONSIVE
+           ============================================================ */
+        @media (max-width: 1020px) {
+            .hero__grid { grid-template-columns: 1fr; }
+            .hero__panel { justify-self: center; width: min(560px, 100%); }
+            .hero__panel, .hero__panel.anim-in { animation: none; transform: none; }
+            .chip--a { left: -8px; }
+            .chip--b { right: -8px; }
+            .tiers { grid-template-columns: 1fr; max-width: 640px; margin-inline: auto; }
+            .tier--1, .tier--2, .tier--3,
+            .tier:hover.tier--1, .tier:hover.tier--2, .tier:hover.tier--3 { transform: none; }
+            .beam { display: none; }
+            .pipeline__head { grid-template-columns: 1fr; }
+        }
+        @media (max-width: 760px) {
+            .nav__links a:not(.nav__cta) { display: none; }
+            .nav__tag { display: none; }
+            .flow__inner { grid-template-columns: 1fr; gap: 30px; }
+            .footer__grid { grid-template-columns: 1fr; }
+            .marq { transform: none; }
+            .flame { grid-template-columns: 92px 1fr 36px; }
+        }
+        @media (max-width: 480px) {
+            .hero__ctas .btn { width: 100%; justify-content: center; }
+            .chip { display: none; }
+        }
+
+        /* ============================================================
+           REDUCED MOTION
+           ============================================================ */
+        @media (prefers-reduced-motion: reduce) {
+            html { scroll-behavior: auto; }
+            *, *::before, *::after {
+                animation-duration: .01ms !important;
+                animation-iteration-count: 1 !important;
+                transition-duration: .01ms !important;
+            }
+            .js .rv { opacity: 1; transform: none; }
+            .hero__panel, .hero__panel.anim-in { animation: none; transform: none; }
+            .bg__mesh { animation: none; }
         }
     </style>
 </head>
-<body class="antialiased min-h-screen flex flex-col">
+<body>
 
-    <!-- Navbar -->
-    <nav class="border-b border-slate-800 bg-slate-900/80 backdrop-blur-md sticky top-0 z-50">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div class="flex justify-between h-16 items-center">
-                <div class="flex-shrink-0 flex items-center gap-2">
-                    <span class="text-2xl font-bold tracking-tight">Tollcraft</span>
+    <!-- background layers -->
+    <div class="bg" aria-hidden="true">
+        <div class="bg__mesh"></div>
+        <div class="bg__grid"></div>
+        <div class="bg__noise"></div>
+    </div>
+
+    <!-- NAV -->
+    <header class="nav">
+        <div class="wrap nav__inner">
+            <a class="nav__brand" href="#top">tollcraft<span class="dot">.</span>
+                <span class="nav__tag">/soroban-cost-profiler</span>
+            </a>
+            <nav class="nav__links" aria-label="Primary">
+                <a href="#pipeline">pipeline</a>
+                <a href="#flow">workflow</a>
+                <a href="https://github.com/Tollcraft" target="_blank" rel="noopener">github</a>
+                <a href="https://tollcraft.gitbook.io/docs" target="_blank" rel="noopener">docs</a>
+                <a class="nav__cta" href="#pipeline">mainnet-ready</a>
+            </nav>
+        </div>
+    </header>
+
+    <main id="top">
+
+        <!-- HERO -->
+        <section class="hero">
+            <div class="wrap hero__grid">
+                <div>
+                    <p class="hero__kicker"><span class="pulse"></span> soroban cost awareness</p>
+                    <h1 class="hero__title">
+                        Stop guessing
+                        <span class="grad">your gas bill.</span>
+                    </h1>
+                    <p class="hero__sub">
+                        A three-tier cost pipeline for Stellar smart contracts. <strong>Lint</strong> at compile time,
+                        <strong>assert</strong> at test time, <strong>profile</strong> when the budget fails — so every
+                        CPU instruction and storage byte is accounted for before mainnet.
+                    </p>
+                    <div class="hero__ctas">
+                        <a class="btn btn--primary" href="#pipeline">
+                            explore the pipeline
+                            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                                <path d="M8 3v10m0 0l-4-4m4 4l4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                            </svg>
+                        </a>
+                        <a class="btn btn--ghost" href="https://github.com/Tollcraft" target="_blank" rel="noopener">
+                            view on github
+                        </a>
+                    </div>
+                    <div class="hero__foot">
+                        <span><i>▸</i> 3 open tools</span>
+                        <span><i>▸</i> zero instrumentation</span>
+                        <span><i>▸</i> dwarf source mapping</span>
+                    </div>
                 </div>
-                <div class="flex space-x-6">
-                    <a href="https://github.com/Tollcraft" target="_blank" class="text-slate-300 hover:text-white font-medium transition-colors">GitHub</a>
-                    <a href="https://tollcraft.gitbook.io/docs" target="_blank" class="text-slate-300 hover:text-white font-medium transition-colors">Documentation</a>
+
+                <!-- terminal panel -->
+                <div class="hero__panel">
+                    <div class="chip chip--a"><span class="swatch"></span>8.4M instructions traced</div>
+                    <div class="chip chip--b"><span class="swatch"></span>source-mapped to rust</div>
+
+                    <div class="term" role="group" aria-label="Interactive demo: a live trace of the cost profiler. The flamegraph shows the top CPU functions; hover a frame for details and click to zoom into its callers.">
+                        <div class="term__bar">
+                            <div class="lights" aria-hidden="true"><span></span><span></span><span></span></div>
+                            <span class="path">~/contracts/swap-pool / profiler</span>
+                            <button class="term__rerun" type="button" aria-label="Re-run the trace demo">
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                    <path d="M21 12a9 9 0 11-2.64-6.36"/>
+                                    <path d="M21 3v6h-6"/>
+                                </svg>
+                                re-run
+                            </button>
+                        </div>
+                        <div class="term__body">
+                            <span class="line cmd" id="t-cmd">soroban-cost-profiler --trace swap_pool.wasm</span>
+                            <span class="line dim" id="t-s1">▸ tracing wasm execution … <span class="ok" id="t-s1-ok">done 412ms</span></span>
+                            <span class="line dim" id="t-s2">▸ mapping dwarf → source … <span class="ok" id="t-s2-ok">done 89ms</span></span>
+
+                            <div class="term__stat">
+                                <span class="num" id="t-n1">8,431,720</span>
+                                <span class="lbl">cpu instructions total</span>
+                                <span class="num" id="t-n2">1,092</span>
+                                <span class="lbl">host function calls</span>
+                                <span class="num" id="t-n3">97.4%</span>
+                                <span class="lbl">spent in 3 functions</span>
+                            </div>
+
+                            <div class="term__flame" id="t-flame">
+                                <div class="flame flame--1" data-frame="swap_depth_loop" data-instr="5172090" data-pct="61" tabindex="0" role="button" aria-label="swap_depth_loop, 61 percent of total">
+                                    <span class="name">swap_depth_loop</span>
+                                    <span class="bar" style="width:61%"></span>
+                                    <span class="pct">61%</span>
+                                </div>
+                                <div class="flame flame--2" data-frame="nested_auth_check" data-instr="1861400" data-pct="22" tabindex="0" role="button" aria-label="nested_auth_check, 22 percent of total">
+                                    <span class="name">nested_auth_check</span>
+                                    <span class="bar" style="width:22%"></span>
+                                    <span class="pct">22%</span>
+                                </div>
+                                <div class="flame flame--3" data-frame="ledger_write_every" data-instr="1080120" data-pct="13" tabindex="0" role="button" aria-label="ledger_write_every, 13 percent of total">
+                                    <span class="name">ledger_write_every</span>
+                                    <span class="bar" style="width:13%"></span>
+                                    <span class="pct">13%</span>
+                                </div>
+                                <div class="flame flame--4" data-frame="other" data-instr="318200" data-pct="4" tabindex="0" role="button" aria-label="other, 4 percent of total">
+                                    <span class="name">other</span>
+                                    <span class="bar" style="width:4%"></span>
+                                    <span class="pct">4%</span>
+                                </div>
+                            </div>
+
+                            <div class="term__detail">
+                                <span class="ctx" id="t-ctx"><b>swap_depth_loop</b> / 5,172,090 / 61%</span>
+                                <button class="reset" id="t-reset" type="button" hidden>← full trace</button>
+                            </div>
+                            <p class="term__hint" id="t-hint">hover a frame for details / click to zoom</p>
+                        </div>
+                    </div>
                 </div>
             </div>
-        </div>
-    </nav>
 
-    <!-- Hero Section -->
-    <main class="flex-grow">
-        <div class="relative pt-32 pb-20 sm:pt-40 sm:pb-24 overflow-hidden">
-            <div class="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAiIGhlaWdodD0iMjAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PGNpcmNsZSBjeD0iMSIgY3k9IjEiIHI9IjEiIGZpbGw9InJnYmEoMjU1LDI1NSwyNTUsMC4wNSkiLz48L3N2Zz4=')] [mask-image:linear-gradient(to_bottom,white,transparent)]"></div>
-            
-            <div class="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-                <h1 class="text-5xl sm:text-7xl font-extrabold tracking-tight mb-6">
-                    Stop Guessing <br class="hidden sm:block" />
-                    <span class="gradient-text">Soroban Gas Costs.</span>
-                </h1>
-                <p class="mt-4 text-xl sm:text-2xl text-slate-400 max-w-3xl mx-auto font-light">
-                    A comprehensive, three-tiered cost awareness pipeline for Stellar smart contracts. Prevent, detect, and diagnose execution bottlenecks before they hit mainnet.
-                </p>
-                <div class="mt-10 flex justify-center gap-4">
-                    <a href="#pipeline" class="px-8 py-3 rounded-full bg-brand-500 hover:bg-brand-400 text-white font-semibold text-lg transition-colors shadow-[0_0_20px_rgba(14,165,233,0.3)]">
-                        Explore the Pipeline
+            <!-- ticker -->
+            <div class="marq" aria-hidden="true">
+                <div class="marq__track">
+                    <span>cpu instructions</span><span>io budget</span><span>storage ops</span>
+                    <span>ledger writes</span><span>soroban wasm</span><span>dwarf source maps</span>
+                    <span>flamegraphs</span><span>speedscope</span><span>host function calls</span>
+                    <span>cpu instructions</span><span>io budget</span><span>storage ops</span>
+                    <span>ledger writes</span><span>soroban wasm</span><span>dwarf source maps</span>
+                    <span>flamegraphs</span><span>speedscope</span><span>host function calls</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- PIPELINE -->
+        <section class="pipeline" id="pipeline">
+            <div class="beam" aria-hidden="true"></div>
+            <div class="wrap">
+                <div class="pipeline__head rv">
+                    <div>
+                        <p class="pipeline__label">the pipeline</p>
+                        <h2 class="pipeline__title">Three tools, <em>one</em> cost pipeline.</h2>
+                    </div>
+                    <p class="pipeline__blurb">
+                        Each tier catches a different failure mode. Used together they close the loop —
+                        <strong>prevent</strong> at compile time, <strong>detect</strong> at test time,
+                        <strong>diagnose</strong> when a budget breaks.
+                    </p>
+                </div>
+
+                <div class="tiers">
+                    <div class="rv rv--1">
+                    <a class="tier tier--1" href="https://github.com/Tollcraft/soroban-cost-linter" target="_blank" rel="noopener">
+                        <span class="tier__ghost" aria-hidden="true">01</span>
+                        <span class="tier__icon" aria-hidden="true">
+                            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M12 2l8 3v6c0 5-3.5 9.5-8 11-4.5-1.5-8-6-8-11V5l8-3z"/>
+                                <path d="M9 12l2 2 4-4"/>
+                            </svg>
+                        </span>
+                        <span class="tier__step">01 / prevent at compile time</span>
+                        <h3 class="tier__name">Cost Linter</h3>
+                        <p class="tier__desc">
+                            Static analysis inside the compiler. Flags structurally expensive code —
+                            <code>storage</code> writes in loops, unbounded iteration — before
+                            <code>cargo build</code> even finishes.
+                        </p>
+                        <span class="tier__link">
+                            open repository
+                            <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                                <path d="M4 12l8-8m0 0H6m6 0v6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                            </svg>
+                        </span>
                     </a>
-                    <a href="https://github.com/Tollcraft" class="px-8 py-3 rounded-full bg-slate-800 hover:bg-slate-700 text-white font-semibold text-lg border border-slate-700 transition-colors">
-                        View on GitHub
+                    </div>
+
+                    <div class="rv rv--2">
+                    <a class="tier tier--2" href="https://github.com/Tollcraft/soroban-budget-assert" target="_blank" rel="noopener">
+                        <span class="tier__ghost" aria-hidden="true">02</span>
+                        <span class="tier__icon" aria-hidden="true">
+                            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M12 20a8 8 0 100-16 8 8 0 000 16z"/>
+                                <path d="M12 12l4-3"/>
+                                <path d="M12 7v5"/>
+                            </svg>
+                        </span>
+                        <span class="tier__step">02 / detect at test time</span>
+                        <h3 class="tier__name">Budget Assert</h3>
+                        <p class="tier__desc">
+                            Simulates your contract against the network. Measures exact <code>cpu</code> and
+                            <code>io</code> spend per invocation and fails CI the moment you cross your budget.
+                        </p>
+                        <span class="tier__link">
+                            open repository
+                            <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                                <path d="M4 12l8-8m0 0H6m6 0v6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                            </svg>
+                        </span>
                     </a>
-                </div>
-            </div>
-        </div>
-
-        <!-- Pipeline Section -->
-        <div id="pipeline" class="py-24 bg-slate-900">
-            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                <div class="text-center mb-16">
-                    <h2 class="text-3xl font-bold tracking-tight text-white sm:text-4xl">The Cost Awareness Pipeline</h2>
-                    <p class="mt-4 text-lg text-slate-400">Three specialized tools designed to work together to optimize your smart contracts.</p>
-                </div>
-
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
-                    <!-- Tier 1 -->
-                    <div class="bg-slate-800/50 rounded-2xl p-8 border border-slate-700 card-hover flex flex-col h-full">
-                        <div class="h-12 w-12 rounded-lg bg-blue-500/20 flex items-center justify-center border border-blue-500/30 mb-6">
-                            <span class="text-2xl">🛡️</span>
-                        </div>
-                        <span class="text-blue-400 font-semibold tracking-wider uppercase text-sm mb-2">Tier 1: Prevent</span>
-                        <h3 class="text-2xl font-bold text-white mb-3">Cost Linter</h3>
-                        <p class="text-slate-400 mb-6 flex-grow">A static analysis shield that hooks into the Rust compiler to catch structurally expensive anti-patterns (e.g., storage operations inside loops) before your code even compiles.</p>
-                        <a href="https://github.com/Tollcraft/soroban-cost-linter" class="text-blue-400 hover:text-blue-300 font-medium inline-flex items-center gap-1">
-                            View Repository <span aria-hidden="true">&rarr;</span>
-                        </a>
                     </div>
 
-                    <!-- Tier 2 -->
-                    <div class="bg-slate-800/50 rounded-2xl p-8 border border-slate-700 card-hover flex flex-col h-full">
-                        <div class="h-12 w-12 rounded-lg bg-emerald-500/20 flex items-center justify-center border border-emerald-500/30 mb-6">
-                            <span class="text-2xl">🧪</span>
-                        </div>
-                        <span class="text-emerald-400 font-semibold tracking-wider uppercase text-sm mb-2">Tier 2: Detect</span>
-                        <h3 class="text-2xl font-bold text-white mb-3">Budget Assert</h3>
-                        <p class="text-slate-400 mb-6 flex-grow">An empirical runtime test harness. Simulates your cleanly-linted code against the network to measure exact resource consumption (CPU/IO) and fails CI if budget limits are exceeded.</p>
-                        <a href="https://github.com/Tollcraft/soroban-budget-assert" class="text-emerald-400 hover:text-emerald-300 font-medium inline-flex items-center gap-1">
-                            View Repository <span aria-hidden="true">&rarr;</span>
-                        </a>
-                    </div>
-
-                    <!-- Tier 3 -->
-                    <div class="bg-slate-800/50 rounded-2xl p-8 border border-slate-700 card-hover flex flex-col h-full relative overflow-hidden">
-                        <div class="absolute top-0 right-0 px-3 py-1 bg-brand-500 text-xs font-bold text-white rounded-bl-lg">NEW</div>
-                        <div class="h-12 w-12 rounded-lg bg-brand-500/20 flex items-center justify-center border border-brand-500/30 mb-6">
-                            <span class="text-2xl">🔥</span>
-                        </div>
-                        <span class="text-brand-400 font-semibold tracking-wider uppercase text-sm mb-2">Tier 3: Diagnose</span>
-                        <h3 class="text-2xl font-bold text-white mb-3">Cost Profiler</h3>
-                        <p class="text-slate-400 mb-6 flex-grow">When a budget fails, the profiler tells you exactly why. It traces WASM execution instruction-by-instruction and maps the cost back to your Rust source code via visual flamegraphs.</p>
-                        <a href="https://github.com/Tollcraft/soroban-cost-profiler" class="text-brand-400 hover:text-brand-300 font-medium inline-flex items-center gap-1">
-                            View Repository <span aria-hidden="true">&rarr;</span>
-                        </a>
+                    <div class="rv rv--3">
+                    <a class="tier tier--3" href="https://github.com/Tollcraft/soroban-cost-profiler" target="_blank" rel="noopener">
+                        <span class="tier__ghost" aria-hidden="true">03</span>
+                        <span class="tier__icon" aria-hidden="true">
+                            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M12 3l1.8 5.4L19 10l-5.2 1.6L12 17l-1.8-5.4L5 10l5.2-1.6L12 3z"/>
+                                <path d="M19 17l.9 2.7L22.6 21l-2.7.9L19 24l-.9-2.1-2.7-.9 2.7-.9L19 17z"/>
+                            </svg>
+                        </span>
+                        <span class="tier__step">03 / diagnose at failure time</span>
+                        <h3 class="tier__name">Cost Profiler</h3>
+                        <p class="tier__desc">
+                            Traces every WASM instruction and maps it back to your Rust source. A flamegraph that
+                            names the function that ate your budget.
+                        </p>
+                        <span class="tier__link">
+                            open repository
+                            <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                                <path d="M4 12l8-8m0 0H6m6 0v6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                            </svg>
+                        </span>
+                    </a>
                     </div>
                 </div>
             </div>
-        </div>
+        </section>
+
+        <!-- FLOW STRIP -->
+        <section class="flow" id="flow">
+            <div class="wrap flow__inner">
+                <div class="flow__item flow__item--1 rv">
+                    <span class="when">compile time</span>
+                    <h3>catch the pattern</h3>
+                    <p>The linter reads your code the way the compiler does, and stops expensive structures at the door.</p>
+                </div>
+                <div class="flow__item flow__item--2 rv rv--1">
+                    <span class="when">test time</span>
+                    <h3>measure the bill</h3>
+                    <p>Budget assert executes real invocations on a simulated network and reports the exact cpu and io cost.</p>
+                </div>
+                <div class="flow__item flow__item--3 rv rv--2">
+                    <span class="when">failure time</span>
+                    <h3>trace the culprit</h3>
+                    <p>When a budget fails, the profiler walks every instruction and tells you precisely where it went.</p>
+                </div>
+            </div>
+        </section>
     </main>
 
-    <!-- Footer -->
-    <footer class="bg-slate-950 py-12 border-t border-slate-800">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-            <p class="text-slate-500">Built for the Stellar ecosystem.</p>
-            <div class="mt-4 flex justify-center space-x-6">
-                <a href="https://github.com/Tollcraft" class="text-slate-400 hover:text-white">
-                    <span class="sr-only">GitHub</span>
-                    <svg class="h-6 w-6" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                        <path fill-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clip-rule="evenodd" />
-                    </svg>
-                </a>
+    <!-- FOOTER -->
+    <footer class="footer">
+        <div class="wrap">
+            <div class="footer__grid">
+                <div>
+                    <p class="footer__wordmark">tollcraft<span class="dot">.</span></p>
+                    <p class="footer__tag">Built for the Stellar ecosystem. Every instruction, accounted for.</p>
+                </div>
+                <div class="footer__links">
+                    <a href="https://github.com/Tollcraft" target="_blank" rel="noopener">github</a>
+                    <a href="https://tollcraft.gitbook.io/docs" target="_blank" rel="noopener">documentation</a>
+                    <a href="https://discord.gg/5aprtMSyR" target="_blank" rel="noopener">community</a>
+                    <a href="https://t.me/+Gflo5jZStw1jMjE0" target="_blank" rel="noopener">maintainers</a>
+                </div>
+            </div>
+            <div class="footer__bottom">
+                <span>© 2026 tollcraft · apache-2.0</span>
+                <span>soroban / wasm / rust</span>
             </div>
         </div>
     </footer>
+
+    <script>
+        document.documentElement.classList.add('js');
+
+        // scroll-triggered reveals
+        const io = new IntersectionObserver((entries) => {
+            for (const entry of entries) {
+                if (entry.isIntersecting) {
+                    entry.target.classList.add('is-in');
+                    io.unobserve(entry.target);
+                }
+            }
+        }, { threshold: 0.14, rootMargin: '0px 0px -6% 0px' });
+
+        document.querySelectorAll('.rv').forEach((el) => io.observe(el));
+
+        /* ============================================================
+           INTERACTIVE LIVE FLAMEGRAPH DEMO
+           ============================================================ */
+        (function () {
+            const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+            const term = document.querySelector('.term');
+            if (!term) return;
+
+            const flame  = document.getElementById('t-flame');
+            const cmd    = document.getElementById('t-cmd');
+            const s1     = document.getElementById('t-s1');
+            const s1ok   = document.getElementById('t-s1-ok');
+            const s2     = document.getElementById('t-s2');
+            const s2ok   = document.getElementById('t-s2-ok');
+            const n1     = document.getElementById('t-n1');
+            const n2     = document.getElementById('t-n2');
+            const n3     = document.getElementById('t-n3');
+            const ctxEl  = document.getElementById('t-ctx');
+            const reset  = document.getElementById('t-reset');
+            const hint   = document.getElementById('t-hint');
+            const rerun  = term.querySelector('.term__rerun');
+
+            const CMD  = 'soroban-cost-profiler --trace swap_pool.wasm';
+            const TOTAL = 8431720, CALLS = 1092, SHARE = 97.4;
+            const fmt = (n) => n.toLocaleString('en-US');
+
+            // flamegraph data model — frames with nested children for zooming
+            const F = {
+                swap_depth_loop:    { instr: 5172090, pct: 61, cls: 'flame--1', children: [
+                    { name: 'balance_read',  instr: 2940000, pct: 57 },
+                    { name: 'swap_math',     instr: 1310000, pct: 25 },
+                    { name: 'pool_fee_calc', instr: 922090,  pct: 18 } ] },
+                nested_auth_check:  { instr: 1861400, pct: 22, cls: 'flame--2', children: [
+                    { name: 'auth_check',    instr: 1120000, pct: 60 },
+                    { name: 'signer_verify', instr: 741400,  pct: 40 } ] },
+                ledger_write_every: { instr: 1080120, pct: 13, cls: 'flame--3', children: [
+                    { name: 'storage_write', instr: 700000,  pct: 65 },
+                    { name: 'emit_event',    instr: 380120,  pct: 35 } ] },
+                other:              { instr: 318200,  pct: 4,  cls: 'flame--4', children: [] }
+            };
+            const ROOT = ['swap_depth_loop', 'nested_auth_check', 'ledger_write_every', 'other'];
+
+            let zoomed = null;      // currently zoomed frame name, or null
+            let timers = [];
+            const later = (fn, ms) => timers.push(setTimeout(fn, ms));
+            const clearTimers = () => { timers.forEach(clearTimeout); timers = []; };
+
+            function ctxText(name, instr, pct) {
+                return '<b>' + name + '</b> / ' + fmt(instr) + ' / ' + pct + '%';
+            }
+            function defaultCtx() {
+                const key = zoomed || ROOT[0];
+                const top = F[key];
+                return ctxText(key, top.instr, top.pct);
+            }
+
+            /* ---- rendering ---- */
+            function makeRow(name, instr, pct, cls, isChild) {
+                const row = document.createElement('div');
+                row.className = 'flame ' + cls + (isChild ? ' flame--child' : '');
+                row.dataset.frame = name;
+                row.setAttribute('tabindex', '0');
+                row.setAttribute('role', 'button');
+                row.setAttribute('aria-label', name + ', ' + pct + ' percent of parent');
+                row.innerHTML = '<span class="name"></span><span class="bar"></span><span class="pct"></span>';
+                row.querySelector('.name').textContent = name;
+                row.querySelector('.pct').textContent = pct + '%';
+                return row;
+            }
+
+            function renderFlame() {
+                flame.innerHTML = '';
+                let rows;
+                if (zoomed) {
+                    const f = F[zoomed];
+                    rows = [makeRow(f.name || zoomed, f.instr, 100, f.cls, false)];
+                    f.children.forEach((c, i) => {
+                        rows.push(makeRow(c.name, c.instr, c.pct, 'flame--' + ((i % 3) + 1), true));
+                    });
+                } else {
+                    rows = ROOT.map((name) => makeRow(name, F[name].instr, F[name].pct, F[name].cls, false));
+                }
+                rows.forEach((row) => { flame.appendChild(row); bindRow(row); });
+                reset.hidden = !zoomed;
+                ctxEl.innerHTML = defaultCtx();
+            }
+
+            function growBars(delay) {
+                // force zero widths without transition, then animate on the next frame
+                term.classList.add('is-booting');
+                flame.querySelectorAll('.bar').forEach((b) => { b.style.width = '0'; });
+                void flame.offsetWidth; // reflow
+                term.classList.remove('is-booting');
+                flame.querySelectorAll('.flame').forEach((row, i) => {
+                    const pct = row.dataset.frame === zoomed ? 100 : pctOf(row);
+                    later(() => { row.querySelector('.bar').style.width = pct + '%'; }, delay + i * 260);
+                });
+            }
+
+            function pctOf(row) {
+                if (row.classList.contains('flame--child')) {
+                    const parent = F[zoomed];
+                    const child = parent.children.find((c) => c.name === row.dataset.frame);
+                    return child ? child.pct : 0;
+                }
+                return F[row.dataset.frame].pct;
+            }
+
+            /* ---- interactions ---- */
+            function dimSiblings(active) {
+                flame.querySelectorAll('.flame').forEach((row) => {
+                    row.classList.toggle('is-dim', row !== active);
+                });
+            }
+            function undimAll() {
+                flame.querySelectorAll('.flame').forEach((row) => row.classList.remove('is-dim'));
+            }
+
+            function bindRow(row) {
+                const show = () => {
+                    if (row.classList.contains('flame--child')) {
+                        const parent = F[zoomed];
+                        const c = parent.children.find((x) => x.name === row.dataset.frame);
+                        ctxEl.innerHTML = ctxText(c.name, c.instr, c.pct);
+                    } else {
+                        const f = F[row.dataset.frame];
+                        ctxEl.innerHTML = ctxText(f.name || row.dataset.frame, f.instr, f.pct);
+                    }
+                    hint.classList.remove('is-on');
+                    dimSiblings(row);
+                };
+                const hide = () => { ctxEl.innerHTML = defaultCtx(); undimAll(); };
+                row.addEventListener('mouseenter', show);
+                row.addEventListener('mouseleave', hide);
+                row.addEventListener('focus', show);
+                row.addEventListener('blur', hide);
+                row.addEventListener('click', () => zoom(row.dataset.frame));
+                row.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); zoom(row.dataset.frame); }
+                });
+            }
+
+            function zoom(name) {
+                const f = F[name];
+                if (!f || !f.children || !f.children.length) return;
+                zoomed = name;
+                clearTimers();
+                renderFlame();
+                growBars(120);
+                hint.classList.remove('is-on');
+            }
+
+            function resetZoom() {
+                if (!zoomed) return;
+                zoomed = null;
+                clearTimers();
+                renderFlame();
+                growBars(0);
+                hint.classList.add('is-on');
+            }
+            reset.addEventListener('click', resetZoom);
+            term.addEventListener('keydown', (e) => { if (e.key === 'Escape') resetZoom(); });
+
+            /* ---- live trace simulation ---- */
+            function countUp(el, target, suffix, duration, decimals) {
+                const steps = 26;
+                let step = 0;
+                const tick = () => {
+                    step++;
+                    const p = step / steps;
+                    const eased = 1 - Math.pow(1 - p, 3);
+                    const val = target * eased;
+                    el.textContent = (decimals ? val.toFixed(decimals) : fmt(Math.round(val))) + (suffix || '');
+                    if (step < steps) later(tick, duration / steps);
+                };
+                later(tick, duration / steps);
+            }
+
+            function runTrace() {
+                clearTimers();
+                zoomed = null;
+                rerun.classList.add('is-running');
+
+                // instant reset
+                renderFlame();
+                term.classList.add('is-booting');
+                flame.querySelectorAll('.bar').forEach((b) => { b.style.width = '0'; });
+                n1.textContent = '0'; n2.textContent = '0'; n3.textContent = '0%';
+                s1ok.textContent = '…'; s2ok.textContent = '…';
+                void flame.offsetWidth;
+                term.classList.remove('is-booting');
+
+                if (reduced) { // final state, no motion
+                    cmd.textContent = CMD;
+                    s1ok.textContent = 'done 412ms';
+                    s2ok.textContent = 'done 89ms';
+                    n1.textContent = fmt(TOTAL); n2.textContent = fmt(CALLS); n3.textContent = SHARE + '%';
+                    flame.querySelectorAll('.flame').forEach((row, i) => {
+                        row.querySelector('.bar').style.width = pctOf(row) + '%';
+                    });
+                    hint.classList.add('is-on');
+                    rerun.classList.remove('is-running');
+                    return;
+                }
+
+                // type the command
+                let i = 0;
+                cmd.textContent = '';
+                const type = setInterval(() => {
+                    cmd.textContent = CMD.slice(0, ++i);
+                    if (i >= CMD.length) clearInterval(type);
+                }, 22);
+                timers.push(type);
+
+                const typed = CMD.length * 22;
+                later(() => { s1ok.textContent = 'running'; }, typed + 60);
+                later(() => { s1ok.textContent = 'done 412ms'; }, typed + 700);
+                later(() => { s2ok.textContent = 'running'; }, typed + 240);
+                later(() => { s2ok.textContent = 'done 89ms'; }, typed + 900);
+                later(() => countUp(n1, TOTAL, '', 1300), typed + 340);
+                later(() => countUp(n2, CALLS, '', 1100), typed + 400);
+                later(() => countUp(n3, SHARE, '%', 1200, 1), typed + 460);
+                later(() => growBars(typed + 760), 0);
+                later(() => { hint.classList.add('is-on'); }, typed + 3800);
+                later(() => rerun.classList.remove('is-running'), typed + 4500);
+            }
+
+            rerun.addEventListener('click', runTrace);
+            runTrace(); // play once on load
+        })();
+    </script>
 </body>
 </html>
