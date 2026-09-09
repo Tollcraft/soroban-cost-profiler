@@ -55,7 +55,7 @@
            ============================================================ */
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-        html { scroll-behavior: smooth; }
+        html { scroll-behavior: smooth; overflow-x: hidden; }
 
         body {
             font-family: var(--font-body);
@@ -362,6 +362,7 @@
         .term {
             min-height: 440px;
             width: 100%;
+            min-width: 0;
             box-sizing: border-box;
             border: 1px solid rgba(244, 241, 255, .12);
             border-radius: var(--radius-lg);
@@ -372,13 +373,15 @@
             overflow: hidden;
         }
         .term__bar {
+            padding: 14px 18px;
+            border-bottom: 1px solid rgba(244, 241, 255, .08);
+            background: rgba(15, 12, 30, .4);
             display: flex;
             align-items: center;
             gap: 8px;
-            padding: 14px 18px;
-            border-bottom: 1px solid rgba(244, 241, 255, .08);
+            min-width: 0;
         }
-        .term__bar .lights { display: flex; gap: 7px; }
+        .term__bar .lights { display: flex; gap: 7px; flex-shrink: 0; }
         .term__bar .lights span {
             width: 10px; height: 10px; border-radius: 50%;
         }
@@ -394,6 +397,8 @@
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
+            min-width: 0;
+            flex: 1;
         }
         .term__rerun {
             margin-left: auto;
@@ -584,6 +589,9 @@
             background: rgba(12, 10, 22, .55);
             overflow: hidden;
             padding: 15px 0;
+            width: 100vw;
+            position: relative;
+            left: calc(-50vw + 50%);
             transform: rotate(-1deg) scale(1.03);
         }
         .marq__track {
@@ -816,6 +824,7 @@
         
         .demo-tabs {
             display: flex;
+            flex-wrap: wrap;
             gap: 12px;
             margin-bottom: 24px;
             justify-content: center;
@@ -1120,7 +1129,7 @@
         <!-- HERO -->
         <section class="hero">
             <div class="wrap hero__grid">
-                <div>
+                <div style="min-width: 0;">
                     <p class="hero__kicker"><span class="pulse"></span> soroban cost awareness</p>
                     <h1 class="hero__title">
                         Stop guessing
