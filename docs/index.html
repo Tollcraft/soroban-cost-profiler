@@ -732,6 +732,52 @@
             color: var(--paper);
             margin-bottom: 8px;
         }
+
+        .hero__foot i {
+            color: var(--t1);
+            font-style: normal;
+            opacity: .6;
+        }
+        
+        .demo-tabs {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 24px;
+            justify-content: center;
+        }
+        .demo-tab {
+            background: transparent;
+            border: 1px solid rgba(244, 241, 255, 0.1);
+            color: var(--muted);
+            padding: 8px 18px;
+            border-radius: 999px;
+            font-family: var(--font-mono);
+            font-size: 0.82rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .demo-tab:hover {
+            background: rgba(244, 241, 255, 0.05);
+            color: var(--paper);
+        }
+        .demo-tab.is-active {
+            background: rgba(244, 241, 255, 0.1);
+            color: var(--paper);
+            border-color: rgba(244, 241, 255, 0.2);
+        }
+        .demo-panel {
+            position: relative;
+            display: none;
+            animation: fade-in 0.3s ease-out;
+        }
+        .demo-panel.is-active {
+            display: block;
+        }
+        @keyframes fade-in {
+            from { opacity: 0; transform: translateY(5px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
         .flow__item p {
             color: var(--muted);
             font-size: .94rem;
@@ -1014,10 +1060,68 @@
 
                 <!-- terminal panel -->
                 <div class="hero__panel">
-                    <div class="chip chip--a"><span class="swatch"></span>8.4M instructions traced</div>
-                    <div class="chip chip--b"><span class="swatch"></span>source-mapped to rust</div>
+                    <div class="demo-tabs" role="tablist">
+                        <button class="demo-tab" data-demo="demo-linter" role="tab" aria-selected="false">1. Linter</button>
+                        <button class="demo-tab" data-demo="demo-assert" role="tab" aria-selected="false">2. Assert</button>
+                        <button class="demo-tab is-active" data-demo="demo-profiler" role="tab" aria-selected="true">3. Profiler</button>
+                    </div>
 
-                    <div class="term" role="group" aria-label="Interactive demo: a live trace of the cost profiler. The flamegraph shows the top CPU functions; hover a frame for details and click to zoom into its callers.">
+                    <!-- linter demo -->
+                    <div class="demo-panel" id="demo-linter" role="tabpanel">
+                        <div class="term" role="group" aria-label="Interactive demo: cost linter output">
+                            <div class="term__bar">
+                                <div class="lights" aria-hidden="true"><span></span><span></span><span></span></div>
+                                <span class="path">~/contracts/swap-pool / linter</span>
+                            </div>
+                            <div class="term__body">
+                                <span class="line cmd">soroban-cost-linter check src/</span>
+                                <span class="line dim">▸ analyzing 42 functions … <span class="ok">done 14ms</span></span>
+                                <br>
+                                <span class="line" style="color: var(--magenta);">[!] WARNING: Unbounded loop detected</span>
+                                <span class="line dim">    Function: `process_all_users`</span>
+                                <span class="line dim">    Location: src/lib.rs:42</span>
+                                <span class="line dim">    Details:  loop lacks budget constraint or max iterations</span>
+                                <br>
+                                <span class="line" style="color: var(--magenta);">[!] WARNING: High instantiation cost</span>
+                                <span class="line dim">    Function: `init_heavy_struct`</span>
+                                <span class="line dim">    Location: src/lib.rs:105</span>
+                                <span class="line dim">    Details:  struct size exceeds 4KB, will cause high gas on heap alloc</span>
+                                <br>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- assert demo -->
+                    <div class="demo-panel" id="demo-assert" role="tabpanel">
+                        <div class="term" role="group" aria-label="Interactive demo: budget assert test failure">
+                            <div class="term__bar">
+                                <div class="lights" aria-hidden="true"><span></span><span></span><span></span></div>
+                                <span class="path">~/contracts/swap-pool / tests</span>
+                            </div>
+                            <div class="term__body">
+                                <span class="line cmd">cargo test test_swap_budget</span>
+                                <span class="line dim">▸ running 1 test</span>
+                                <span class="line" style="color: var(--magenta);">test test_swap_budget ... FAILED</span>
+                                <br>
+                                <span class="line">failures:</span>
+                                <br>
+                                <span class="line">---- test_swap_budget ----</span>
+                                <span class="line">BudgetAssertionError:</span>
+                                <span class="line dim">  Expected max CPU instructions:  <span style="color: var(--cyan);">10,000,000</span></span>
+                                <span class="line dim">  Actual CPU instructions:        <span style="color: var(--magenta);">12,450,192</span></span>
+                                <span class="line dim">  Overage:                        <span style="color: var(--magenta);">+24.5%</span></span>
+                                <br>
+                                <span class="line dim">  Failed at src/test.rs:88</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- profiler demo -->
+                    <div class="demo-panel is-active" id="demo-profiler" role="tabpanel">
+                        <div class="chip chip--a"><span class="swatch"></span>8.4M instructions traced</div>
+                        <div class="chip chip--b"><span class="swatch"></span>source-mapped to rust</div>
+
+                        <div class="term" id="profiler-term" role="group" aria-label="Interactive demo: a live trace of the cost profiler. The flamegraph shows the top CPU functions; hover a frame for details and click to zoom into its callers.">
                         <div class="term__bar">
                             <div class="lights" aria-hidden="true"><span></span><span></span><span></span></div>
                             <span class="path">~/contracts/swap-pool / profiler</span>
@@ -1072,8 +1176,8 @@
                             </div>
                             <p class="term__hint" id="t-hint">hover a frame for details / click to zoom</p>
                         </div>
-                    </div>
-                </div>
+                    </div> <!-- /.demo-panel -->
+                </div> <!-- /.hero__panel -->
             </div>
 
             <!-- ticker -->
@@ -1308,6 +1412,22 @@
 
     <script>
         document.documentElement.classList.add('js');
+
+        // demo tabs logic
+        const tabs = document.querySelectorAll('.demo-tab');
+        const panels = document.querySelectorAll('.demo-panel');
+        tabs.forEach(tab => {
+            tab.addEventListener('click', () => {
+                tabs.forEach(t => {
+                    t.classList.remove('is-active');
+                    t.setAttribute('aria-selected', 'false');
+                });
+                panels.forEach(p => p.classList.remove('is-active'));
+                tab.classList.add('is-active');
+                tab.setAttribute('aria-selected', 'true');
+                document.getElementById(tab.dataset.demo).classList.add('is-active');
+            });
+        });
 
         // scroll-triggered reveals
         const io = new IntersectionObserver((entries) => {
