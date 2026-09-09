@@ -3,10 +3,24 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Tollcraft — Soroban Cost Awareness</title>
+    <title>Tollcraft · Soroban Cost Awareness</title>
     <meta name="description" content="A three-tier cost awareness pipeline for Stellar smart contracts. Lint at compile time, assert at test time, profile when the budget fails.">
-    <meta property="og:title" content="Tollcraft — Soroban Cost Awareness">
+    <meta property="og:title" content="Tollcraft · Soroban Cost Awareness">
+    <link rel="icon" type="image/png" href="favicon.png">
+    <link rel="apple-touch-icon" href="favicon.png">
     <meta property="og:description" content="Prevent, detect, and diagnose Soroban execution costs before mainnet.">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://tollcraft.github.io/soroban-cost-profiler/">
+    <meta property="og:site_name" content="Tollcraft">
+    <meta property="og:image" content="https://tollcraft.github.io/soroban-cost-profiler/og-image.png">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+    <meta property="og:image:alt" content="The tollcraft wordmark above the headline 'Stop guessing your gas bill.' with the three cost tools: lint, assert, profile.">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Tollcraft · Soroban Cost Awareness">
+    <meta name="twitter:description" content="Prevent, detect, and diagnose Soroban execution costs before mainnet.">
+    <meta name="twitter:image" content="https://tollcraft.github.io/soroban-cost-profiler/og-image.png">
+    <meta name="twitter:image:alt" content="The tollcraft wordmark above the headline 'Stop guessing your gas bill.' with the three cost tools: lint, assert, profile.">
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -21,10 +35,10 @@
             --void-2:      #0c0a16;
             --paper:       #f4f1ff;
             --muted:       #a9a1c6;
-            --faint:       #6f6790;
+            --faint:       #7a72a3;
 
             --cyan:        #22d3ee;
-            --violet:      #8b5cf6;
+            --violet:      #7c3aed;
             --magenta:     #e879f9;
             --amber:       #fbbf24;
 
@@ -40,6 +54,8 @@
             --radius-md: 14px;
             --ease-out: cubic-bezier(.22, 1, .36, 1);
             --nav-h: 72px;
+
+            color-scheme: dark;
         }
 
         :root[data-theme="light"] {
@@ -47,11 +63,15 @@
             --void-2:      #f4f4f5;
             --paper:       #09090b;
             --muted:       #52525b;
-            --faint:       #a1a1aa;
+            --faint:       #71717a;
+            --cyan:        #0e7490; /* darker cyan */
+            --magenta:     #a21caf; /* darker magenta */
             --t1:          #db2777; /* darker pink */
-            --t2:          #0284c7; /* darker blue */
+            --t2:          #0369a1; /* darker blue */
             --t3:          #7c3aed; /* darker purple */
             --violet:      #6d28d9;
+
+            color-scheme: light;
         }
 
         /* ============================================================
@@ -59,7 +79,10 @@
            ============================================================ */
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-        html { scroll-behavior: smooth; }
+        html {
+            scroll-behavior: smooth;
+            scroll-padding-top: calc(var(--nav-h) + 10px);
+        }
 
         body {
             font-family: var(--font-body);
@@ -151,7 +174,7 @@
         .nav__links {
             display: flex;
             align-items: center;
-            gap: 28px;
+            gap: 24px;
         }
         .nav__links a {
             text-decoration: none;
@@ -229,9 +252,6 @@
         :root[data-theme="light"] .term__bar .path {
             color: var(--muted);
         }
-        :root[data-theme="light"] .term__flame-block {
-            color: rgba(255, 255, 255, 0.9);
-        }
         :root[data-theme="light"] .chip {
             background: rgba(255, 255, 255, 0.85);
             border-color: rgba(0, 0, 0, 0.1);
@@ -260,10 +280,6 @@
         :root[data-theme="light"] .bg__noise {
             opacity: .02;
         }
-        :root[data-theme="light"] .card {
-            border-color: rgba(0, 0, 0, 0.08);
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.03);
-        }
         :root[data-theme="light"] .tier {
             background: rgba(255, 255, 255, 0.85);
             border-color: rgba(0, 0, 0, 0.08);
@@ -280,6 +296,20 @@
         }
         :root[data-theme="light"] .tier__desc code {
             background: rgba(0, 0, 0, 0.05);
+        }
+        :root[data-theme="light"] .btn--primary {
+            color: #fff;
+        }
+        :root[data-theme="light"] .btn--ghost {
+            border-color: rgba(0, 0, 0, .16);
+            background: rgba(0, 0, 0, .03);
+        }
+        :root[data-theme="light"] .btn--ghost:hover {
+            border-color: rgba(0, 0, 0, .35);
+            background: rgba(0, 0, 0, .06);
+        }
+        :root[data-theme="light"] .flame--4 .bar {
+            background: rgba(0, 0, 0, .16);
         }
         :root[data-theme="light"] .faq__item {
             border-bottom-color: rgba(0, 0, 0, 0.08);
@@ -396,7 +426,6 @@
             letter-spacing: .06em;
         }
         .hero__foot span { display: inline-flex; align-items: center; gap: 8px; }
-        .hero__foot i { font-style: normal; color: var(--t2); }
 
         /* ---- terminal panel (right) ---- */
         .hero__panel {
@@ -1194,7 +1223,7 @@
                     </h1>
                     <p class="hero__sub">
                         A three-tier cost pipeline for Stellar smart contracts. <strong>Lint</strong> at compile time,
-                        <strong>assert</strong> at test time, <strong>profile</strong> when the budget fails — so every
+                        <strong>assert</strong> at test time, <strong>profile</strong> when the budget fails, so every
                         CPU instruction and storage byte is accounted for before mainnet.
                     </p>
                     <div class="hero__ctas">
@@ -1351,23 +1380,24 @@
                             </div>
                             <p class="term__hint" id="t-hint">hover a frame for details / click to zoom</p>
                         </div>
-                    </div> <!-- /.demo-panel -->
-                </div> <!-- /.hero__panel -->
-            </div>
+                    </div> <!-- /.term -->
+                </div> <!-- /.demo-panel -->
+            </div> <!-- /.hero__panel -->
+        </div> <!-- /.wrap hero__grid -->
 
-            <!-- ticker -->
-            <div class="marq-wrap">
-                <div class="marq" aria-hidden="true">
-                    <div class="marq__track">
-                        <span>cpu instructions</span><span>io budget</span><span>storage ops</span>
-                        <span>ledger writes</span><span>soroban wasm</span><span>dwarf source maps</span>
-                        <span>flamegraphs</span><span>speedscope</span><span>host function calls</span>
-                        <span>cpu instructions</span><span>io budget</span><span>storage ops</span>
-                        <span>ledger writes</span><span>soroban wasm</span><span>dwarf source maps</span>
-                        <span>flamegraphs</span><span>speedscope</span><span>host function calls</span>
-                    </div>
+        <!-- ticker -->
+        <div class="marq-wrap">
+            <div class="marq" aria-hidden="true">
+                <div class="marq__track">
+                    <span>cpu instructions</span><span>io budget</span><span>storage ops</span>
+                    <span>ledger writes</span><span>soroban wasm</span><span>dwarf source maps</span>
+                    <span>flamegraphs</span><span>speedscope</span><span>host function calls</span>
+                    <span>cpu instructions</span><span>io budget</span><span>storage ops</span>
+                    <span>ledger writes</span><span>soroban wasm</span><span>dwarf source maps</span>
+                    <span>flamegraphs</span><span>speedscope</span><span>host function calls</span>
                 </div>
             </div>
+        </div>
         </section>
 
         <!-- PIPELINE -->
@@ -1380,7 +1410,7 @@
                         <h2 class="pipeline__title">Three tools, <em>one</em> cost pipeline.</h2>
                     </div>
                     <p class="pipeline__blurb">
-                        Each tier catches a different failure mode. Used together they close the loop —
+                        Each tier catches a different failure mode. Used together they close the loop:
                         <strong>prevent</strong> at compile time, <strong>detect</strong> at test time,
                         <strong>diagnose</strong> when a budget breaks.
                     </p>
@@ -1399,8 +1429,8 @@
                         <span class="tier__step">01 / prevent at compile time</span>
                         <h3 class="tier__name">Cost Linter</h3>
                         <p class="tier__desc">
-                            Static analysis inside the compiler. Flags structurally expensive code —
-                            <code>storage</code> writes in loops, unbounded iteration — before
+                            Static analysis inside the compiler. Flags structurally expensive code
+                            (<code>storage</code> writes in loops, unbounded iteration) before
                             <code>cargo build</code> even finishes.
                         </p>
                         <span class="tier__link">
