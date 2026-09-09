@@ -248,6 +248,11 @@
             background: rgba(0, 0, 0, 0.05);
             border-color: rgba(0, 0, 0, 0.1);
         }
+        :root[data-theme="light"] .marq {
+            background: rgba(0, 0, 0, 0.02);
+            border-top-color: rgba(0, 0, 0, 0.06);
+            border-bottom-color: rgba(0, 0, 0, 0.06);
+        }
         :root[data-theme="light"] .nav {
             background: rgba(255, 255, 255, 0.85);
             border-bottom-color: rgba(0, 0, 0, 0.08);
@@ -636,7 +641,10 @@
             background: rgba(12, 10, 22, .55);
             overflow: hidden;
             padding: 15px 0;
-            transform: rotate(-1deg) scale(1.03);
+            width: 105vw;
+            position: relative;
+            left: calc(-52.5vw + 50%);
+            transform: rotate(-1.5deg);
         }
         .marq__track {
             display: flex;
