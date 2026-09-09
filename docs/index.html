@@ -596,30 +596,30 @@
             background: linear-gradient(180deg, rgba(12, 10, 22, .7), transparent);
             pointer-events: none;
         }
-        .pipeline__head {
+        .pipeline__head, .flow__head {
             display: grid;
             grid-template-columns: 1fr auto;
             align-items: end;
             gap: 40px;
             margin-bottom: clamp(64px, 8vw, 96px);
         }
-        .pipeline__label {
+        .pipeline__label, .flow__label {
             font-family: var(--font-mono);
             font-size: .78rem;
-            color: var(--t2);
+            color: var(--t1);
             letter-spacing: .1em;
             margin-bottom: 14px;
             display: flex;
             align-items: center;
             gap: 10px;
         }
-        .pipeline__label::before {
+        .pipeline__label::before, .flow__label::before {
             content: "";
             width: 34px;
             height: 1px;
-            background: linear-gradient(90deg, var(--t2), transparent);
+            background: linear-gradient(90deg, var(--t1), transparent);
         }
-        .pipeline__title {
+        .pipeline__title, .flow__title {
             font-family: var(--font-display);
             font-weight: 700;
             font-size: clamp(1.9rem, 4vw, 3.1rem);
@@ -628,18 +628,18 @@
             text-wrap: balance;
             max-width: 14em;
         }
-        .pipeline__title em {
+        .pipeline__title em, .flow__title em {
             font-style: normal;
-            color: var(--t1);
+            color: var(--t2);
         }
-        .pipeline__blurb {
+        .pipeline__blurb, .flow__blurb {
             max-width: 30em;
             color: var(--muted);
             font-size: 1.02rem;
             line-height: 1.7;
             padding-bottom: 6px;
         }
-        .pipeline__blurb strong { color: var(--paper); font-weight: 600; }
+        .pipeline__blurb strong, .flow__blurb strong { color: var(--paper); font-weight: 600; }
 
         /* dashed beam connecting the tiers */
         .beam {
@@ -884,7 +884,7 @@
             .tier--1, .tier--2, .tier--3,
             .tier:hover.tier--1, .tier:hover.tier--2, .tier:hover.tier--3 { transform: none; }
             .beam { display: none; }
-            .pipeline__head { grid-template-columns: 1fr; }
+            .pipeline__head, .flow__head { grid-template-columns: 1fr; }
         }
         @media (max-width: 760px) {
             .nav__links a:not(.nav__cta) { display: none; }
@@ -897,6 +897,103 @@
         @media (max-width: 480px) {
             .hero__ctas .btn { width: 100%; justify-content: center; }
             .chip { display: none; }
+        }
+
+        /* ============================================================
+           FAQ
+           ============================================================ */
+        .faq {
+            padding: clamp(60px, 10vw, 120px) 0;
+            border-top: 1px solid rgba(244, 241, 255, .05);
+        }
+        .faq__inner {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 40px;
+        }
+        @media (min-width: 900px) {
+            .faq__inner {
+                grid-template-columns: .4fr .6fr;
+                gap: 60px;
+                align-items: start;
+            }
+        }
+        .faq__head {
+            position: sticky;
+            top: calc(var(--nav-h) + 40px);
+        }
+        .faq__title {
+            font-family: var(--font-display);
+            font-size: clamp(1.8rem, 3vw, 2.4rem);
+            font-weight: 700;
+            letter-spacing: -.02em;
+            line-height: 1.1;
+            color: var(--paper);
+        }
+        .faq__accordion {
+            display: flex;
+            flex-direction: column;
+            gap: 0;
+        }
+        .faq__item {
+            border-bottom: 1px solid rgba(244, 241, 255, .08);
+        }
+        .faq__item:first-child {
+            border-top: 1px solid rgba(244, 241, 255, .08);
+        }
+        .faq__item:last-child {
+            border-bottom: 1px solid rgba(244, 241, 255, .08);
+        }
+        .faq__question {
+            width: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: none;
+            border: none;
+            padding: 24px 0;
+            font-family: var(--font-display);
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: var(--paper);
+            text-align: left;
+            cursor: pointer;
+            letter-spacing: -.01em;
+            transition: color .2s var(--ease-out);
+        }
+        .faq__question:hover {
+            color: var(--cyan);
+        }
+        .faq__icon {
+            color: var(--muted);
+            transition: transform .3s var(--ease-out), color .2s var(--ease-out);
+            flex-shrink: 0;
+            margin-left: 16px;
+        }
+        .faq__item.is-open .faq__icon {
+            transform: rotate(180deg);
+            color: var(--cyan);
+        }
+        .faq__item.is-open .faq__question {
+            color: var(--cyan);
+        }
+        .faq__answer {
+            display: grid;
+            grid-template-rows: 0fr;
+            transition: grid-template-rows .3s var(--ease-out);
+        }
+        .faq__item.is-open .faq__answer {
+            grid-template-rows: 1fr;
+        }
+        .faq__answer-inner {
+            overflow: hidden;
+            font-size: 1rem;
+            color: var(--muted);
+            line-height: 1.6;
+        }
+        .faq__answer-inner p {
+            padding-bottom: 24px;
+            margin: 0;
         }
 
         /* ============================================================
@@ -933,6 +1030,7 @@
             <nav class="nav__links" aria-label="Primary">
                 <a href="#pipeline">pipeline</a>
                 <a href="#flow">workflow</a>
+                <a href="#faq">faq</a>
                 <a href="https://github.com/Tollcraft" target="_blank" rel="noopener">github</a>
                 <a href="https://tollcraft.gitbook.io/docs" target="_blank" rel="noopener">docs</a>
                 <a class="nav__cta" href="#pipeline">mainnet-ready</a>
@@ -1147,9 +1245,19 @@
 
         <!-- FLOW STRIP -->
         <section class="flow" id="flow">
-            <div class="wrap flow__inner">
-                <div class="flow__item flow__item--1 rv">
-                    <span class="when">compile time</span>
+            <div class="wrap">
+                <div class="flow__head rv">
+                    <div>
+                        <p class="flow__label">the workflow</p>
+                        <h2 class="flow__title">How to <em>profile</em> a contract.</h2>
+                    </div>
+                    <p class="flow__blurb">
+                        Profiling your cost doesn't require modifying your contract code. Simply build with debug symbols and trace the local WASM execution.
+                    </p>
+                </div>
+                <div class="flow__inner">
+                    <div class="flow__item flow__item--1 rv">
+                        <span class="when">compile time</span>
                     <h3>catch the pattern</h3>
                     <p>The linter reads your code the way the compiler does, and stops expensive structures at the door.</p>
                 </div>
@@ -1162,6 +1270,75 @@
                     <span class="when">failure time</span>
                     <h3>trace the culprit</h3>
                     <p>When a budget fails, the profiler walks every instruction and tells you precisely where it went.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+        
+        <!-- FAQ -->
+        <section class="faq" id="faq">
+            <div class="wrap faq__inner">
+                <div class="faq__head rv">
+                    <h2 class="faq__title">Frequently Asked Questions</h2>
+                </div>
+                <div class="faq__list">
+                    <div class="faq__accordion">
+                        <div class="faq__item rv rv--1">
+                            <button class="faq__question" aria-expanded="false">
+                                <span>Do I need to instrument my contract code?</span>
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="faq__icon"><path d="M6 9l6 6 6-6"/></svg>
+                            </button>
+                            <div class="faq__answer">
+                                <div class="faq__answer-inner">
+                                    <p>No. The profiler hooks directly into the local WASM execution engine. You only need to compile your binary with DWARF debug info.</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="faq__item rv rv--2">
+                            <button class="faq__question" aria-expanded="false">
+                                <span>Can I deploy a profiled contract to mainnet?</span>
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="faq__icon"><path d="M6 9l6 6 6-6"/></svg>
+                            </button>
+                            <div class="faq__answer">
+                                <div class="faq__answer-inner">
+                                    <p>You shouldn't. The required debug tables will heavily bloat your binary size, resulting in significantly higher on-chain deployment fees.</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="faq__item rv rv--3">
+                            <button class="faq__question" aria-expanded="false">
+                                <span>Does this tool work on live network transactions?</span>
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="faq__icon"><path d="M6 9l6 6 6-6"/></svg>
+                            </button>
+                            <div class="faq__answer">
+                                <div class="faq__answer-inner">
+                                    <p>No. The profiler traces execution locally in a simulated test environment. It does not query mainnet or testnet transactions.</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="faq__item rv rv--4">
+                            <button class="faq__question" aria-expanded="false">
+                                <span>What happens if my contract panics or loops infinitely?</span>
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="faq__icon"><path d="M6 9l6 6 6-6"/></svg>
+                            </button>
+                            <div class="faq__answer">
+                                <div class="faq__answer-inner">
+                                    <p>The profiler will still generate a valid trace. For panics, you'll see the cost leading up to the failure. For infinite loops, it gracefully halts and outputs a partial trace.</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="faq__item rv rv--5">
+                            <button class="faq__question" aria-expanded="false">
+                                <span>Why does my flamegraph look imprecise?</span>
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="faq__icon"><path d="M6 9l6 6 6-6"/></svg>
+                            </button>
+                            <div class="faq__answer">
+                                <div class="faq__answer-inner">
+                                    <p>Aggressive compiler optimizations like LTO (Link-Time Optimization) and inlining can merge functions. Downstream tools may also strip debug sections, causing coarse line mappings.</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </section>
@@ -1433,6 +1610,31 @@
 
             rerun.addEventListener('click', runTrace);
             runTrace(); // play once on load
+        })();
+
+        /* ============================================================
+           FAQ ACCORDION
+           ============================================================ */
+        (function() {
+            const items = document.querySelectorAll('.faq__item');
+            items.forEach((item) => {
+                const btn = item.querySelector('.faq__question');
+                if (!btn) return;
+                btn.addEventListener('click', () => {
+                    const isOpen = item.classList.contains('is-open');
+                    
+                    items.forEach(i => {
+                        i.classList.remove('is-open');
+                        const b = i.querySelector('.faq__question');
+                        if(b) b.setAttribute('aria-expanded', 'false');
+                    });
+                    
+                    if (!isOpen) {
+                        item.classList.add('is-open');
+                        btn.setAttribute('aria-expanded', 'true');
+                    }
+                });
+            });
         })();
     </script>
 </body>

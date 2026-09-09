@@ -32,3 +32,9 @@
 - [ ] **Panic Handling:** Ensure the aggregator flushes and formats the trace even if the contract panics mid-execution.
 - [ ] **Infinite Loop Protection:** Enforce a hard ceiling (e.g. 100M instructions) to halt tracing and prevent OOM crashes.
 - [ ] **Documentation:** Update README with usage examples and CLI flag details.
+- [x] **FAQ:** Design and implement FAQ section for GitHub Pages (`docs/index.html`).
+
+## Tooling & Agent Setup
+- [x] Install `agentic-awesome-skills` to `.agents/` for enhanced AI workflows.
+- [x] Install official Anthropic skills and plugins from `claude-plugins-official`.
+- [x] Generate `INSTALLED_SKILLS.md` catalog detailing all loaded agents and plugins.
