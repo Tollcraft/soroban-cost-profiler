@@ -634,16 +634,21 @@
         /* ============================================================
            MARQUEE TICKER
            ============================================================ */
-        .marq {
+        .marq-wrap {
+            width: 100%;
+            overflow: hidden;
             margin-top: clamp(120px, 16vw, 190px);
+            padding: 20px 0;
+        }
+        .marq {
             border-top: 1px solid rgba(244, 241, 255, .07);
             border-bottom: 1px solid rgba(244, 241, 255, .07);
             background: rgba(12, 10, 22, .55);
             overflow: hidden;
             padding: 15px 0;
-            width: 105vw;
+            width: 106%;
             position: relative;
-            left: calc(-52.5vw + 50%);
+            left: -3%;
             transform: rotate(-1.5deg);
         }
         .marq__track {
@@ -1351,14 +1356,16 @@
             </div>
 
             <!-- ticker -->
-            <div class="marq" aria-hidden="true">
-                <div class="marq__track">
-                    <span>cpu instructions</span><span>io budget</span><span>storage ops</span>
-                    <span>ledger writes</span><span>soroban wasm</span><span>dwarf source maps</span>
-                    <span>flamegraphs</span><span>speedscope</span><span>host function calls</span>
-                    <span>cpu instructions</span><span>io budget</span><span>storage ops</span>
-                    <span>ledger writes</span><span>soroban wasm</span><span>dwarf source maps</span>
-                    <span>flamegraphs</span><span>speedscope</span><span>host function calls</span>
+            <div class="marq-wrap">
+                <div class="marq" aria-hidden="true">
+                    <div class="marq__track">
+                        <span>cpu instructions</span><span>io budget</span><span>storage ops</span>
+                        <span>ledger writes</span><span>soroban wasm</span><span>dwarf source maps</span>
+                        <span>flamegraphs</span><span>speedscope</span><span>host function calls</span>
+                        <span>cpu instructions</span><span>io budget</span><span>storage ops</span>
+                        <span>ledger writes</span><span>soroban wasm</span><span>dwarf source maps</span>
+                        <span>flamegraphs</span><span>speedscope</span><span>host function calls</span>
+                    </div>
                 </div>
             </div>
         </section>
