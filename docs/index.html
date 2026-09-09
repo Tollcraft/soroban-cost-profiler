@@ -1074,50 +1074,68 @@
 
                     <!-- linter demo -->
                     <div class="demo-panel" id="demo-linter" role="tabpanel">
-                        <div class="term" role="group" aria-label="Interactive demo: cost linter output">
+                        <div class="term" id="linter-term" role="group" aria-label="Interactive demo: cost linter output">
                             <div class="term__bar">
                                 <div class="lights" aria-hidden="true"><span></span><span></span><span></span></div>
                                 <span class="path">~/contracts/swap-pool / linter</span>
+                                <button class="term__rerun" type="button" aria-label="Re-run the linter demo">
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                        <path d="M21 12a9 9 0 11-2.64-6.36"/>
+                                        <path d="M21 3v6h-6"/>
+                                    </svg>
+                                    re-run
+                                </button>
                             </div>
                             <div class="term__body">
-                                <span class="line cmd">soroban-cost-linter check src/</span>
-                                <span class="line dim">▸ analyzing 42 functions … <span class="ok">done 14ms</span></span>
-                                <br>
-                                <span class="line" style="color: var(--magenta);">[!] WARNING: Unbounded loop detected</span>
-                                <span class="line dim">    Function: `process_all_users`</span>
-                                <span class="line dim">    Location: src/lib.rs:42</span>
-                                <span class="line dim">    Details:  loop lacks budget constraint or max iterations</span>
-                                <br>
-                                <span class="line" style="color: var(--magenta);">[!] WARNING: High instantiation cost</span>
-                                <span class="line dim">    Function: `init_heavy_struct`</span>
-                                <span class="line dim">    Location: src/lib.rs:105</span>
-                                <span class="line dim">    Details:  struct size exceeds 4KB, will cause high gas on heap alloc</span>
-                                <br>
+                                <span class="line cmd" id="l-cmd">soroban-cost-linter check src/</span>
+                                <div id="l-out">
+                                    <span class="line dim">▸ analyzing 42 functions … <span class="ok">done 14ms</span></span>
+                                    <br>
+                                    <span class="line" style="color: var(--magenta);">[!] WARNING: Unbounded loop detected</span>
+                                    <span class="line dim">    Function: `process_all_users`</span>
+                                    <span class="line dim">    Location: src/lib.rs:42</span>
+                                    <span class="line dim">    Details:  loop lacks budget constraint or max iterations</span>
+                                    <br>
+                                    <span class="line" style="color: var(--magenta);">[!] WARNING: High instantiation cost</span>
+                                    <span class="line dim">    Function: `init_heavy_struct`</span>
+                                    <span class="line dim">    Location: src/lib.rs:105</span>
+                                    <span class="line dim">    Details:  struct size exceeds 4KB, will cause high gas on heap alloc</span>
+                                    <br>
+                                </div>
                             </div>
                         </div>
                     </div>
 
                     <!-- assert demo -->
                     <div class="demo-panel" id="demo-assert" role="tabpanel">
-                        <div class="term" role="group" aria-label="Interactive demo: budget assert test failure">
+                        <div class="term" id="assert-term" role="group" aria-label="Interactive demo: budget assert test failure">
                             <div class="term__bar">
                                 <div class="lights" aria-hidden="true"><span></span><span></span><span></span></div>
                                 <span class="path">~/contracts/swap-pool / tests</span>
+                                <button class="term__rerun" type="button" aria-label="Re-run the assert demo">
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                        <path d="M21 12a9 9 0 11-2.64-6.36"/>
+                                        <path d="M21 3v6h-6"/>
+                                    </svg>
+                                    re-run
+                                </button>
                             </div>
                             <div class="term__body">
-                                <span class="line cmd">cargo test test_swap_budget</span>
-                                <span class="line dim">▸ running 1 test</span>
-                                <span class="line" style="color: var(--magenta);">test test_swap_budget ... FAILED</span>
-                                <br>
-                                <span class="line">failures:</span>
-                                <br>
-                                <span class="line">---- test_swap_budget ----</span>
-                                <span class="line">BudgetAssertionError:</span>
-                                <span class="line dim">  Expected max CPU instructions:  <span style="color: var(--cyan);">10,000,000</span></span>
-                                <span class="line dim">  Actual CPU instructions:        <span style="color: var(--magenta);">12,450,192</span></span>
-                                <span class="line dim">  Overage:                        <span style="color: var(--magenta);">+24.5%</span></span>
-                                <br>
-                                <span class="line dim">  Failed at src/test.rs:88</span>
+                                <span class="line cmd" id="a-cmd">cargo test test_swap_budget</span>
+                                <div id="a-out">
+                                    <span class="line dim">▸ running 1 test</span>
+                                    <span class="line" style="color: var(--magenta);">test test_swap_budget ... FAILED</span>
+                                    <br>
+                                    <span class="line">failures:</span>
+                                    <br>
+                                    <span class="line">---- test_swap_budget ----</span>
+                                    <span class="line">BudgetAssertionError:</span>
+                                    <span class="line dim">  Expected max CPU instructions:  <span style="color: var(--cyan);">10,000,000</span></span>
+                                    <span class="line dim">  Actual CPU instructions:        <span style="color: var(--magenta);">12,450,192</span></span>
+                                    <span class="line dim">  Overage:                        <span style="color: var(--magenta);">+24.5%</span></span>
+                                    <br>
+                                    <span class="line dim">  Failed at src/test.rs:88</span>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -1452,7 +1470,7 @@
            ============================================================ */
         (function () {
             const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-            const term = document.querySelector('.term');
+            const term = document.getElementById('profiler-term');
             if (!term) return;
 
             const flame  = document.getElementById('t-flame');
@@ -1609,6 +1627,64 @@
             }
             reset.addEventListener('click', resetZoom);
             term.addEventListener('keydown', (e) => { if (e.key === 'Escape') resetZoom(); });
+
+            /* ---- live linter simulation ---- */
+            const linterTerm = document.getElementById('linter-term');
+            const linterCmd = document.getElementById('l-cmd');
+            const linterOut = document.getElementById('l-out');
+            const linterRerun = linterTerm.querySelector('.term__rerun');
+            const LINTER_CMD = 'soroban-cost-linter check src/';
+            
+            function runLinter() {
+                if (linterRerun.classList.contains('is-running')) return;
+                linterRerun.classList.add('is-running');
+                linterTerm.classList.add('is-booting');
+                linterOut.style.display = 'none';
+                
+                let i = 0;
+                linterCmd.textContent = '';
+                const type = setInterval(() => {
+                    linterCmd.textContent = LINTER_CMD.slice(0, ++i);
+                    if (i >= LINTER_CMD.length) {
+                        clearInterval(type);
+                        setTimeout(() => {
+                            linterOut.style.display = 'block';
+                            linterRerun.classList.remove('is-running');
+                            linterTerm.classList.remove('is-booting');
+                        }, 300);
+                    }
+                }, 40);
+            }
+            linterRerun.addEventListener('click', runLinter);
+
+            /* ---- live assert simulation ---- */
+            const assertTerm = document.getElementById('assert-term');
+            const assertCmd = document.getElementById('a-cmd');
+            const assertOut = document.getElementById('a-out');
+            const assertRerun = assertTerm.querySelector('.term__rerun');
+            const ASSERT_CMD = 'cargo test test_swap_budget';
+            
+            function runAssert() {
+                if (assertRerun.classList.contains('is-running')) return;
+                assertRerun.classList.add('is-running');
+                assertTerm.classList.add('is-booting');
+                assertOut.style.display = 'none';
+                
+                let i = 0;
+                assertCmd.textContent = '';
+                const type = setInterval(() => {
+                    assertCmd.textContent = ASSERT_CMD.slice(0, ++i);
+                    if (i >= ASSERT_CMD.length) {
+                        clearInterval(type);
+                        setTimeout(() => {
+                            assertOut.style.display = 'block';
+                            assertRerun.classList.remove('is-running');
+                            assertTerm.classList.remove('is-booting');
+                        }, 400);
+                    }
+                }, 40);
+            }
+            assertRerun.addEventListener('click', runAssert);
 
             /* ---- live trace simulation ---- */
             function countUp(el, target, suffix, duration, decimals) {
