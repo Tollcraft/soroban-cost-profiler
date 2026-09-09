@@ -86,52 +86,7 @@
             background: var(--void);
         }
 
-        /* slow-drifting gradient mesh */
-        .bg__mesh {
-            position: absolute;
-            inset: -20%;
-            filter: blur(110px);
-            opacity: .55;
-            animation: mesh-drift 26s var(--ease-out) infinite alternate;
-        }
-        .bg__mesh::before,
-        .bg__mesh::after {
-            content: "";
-            position: absolute;
-            width: 52vw;
-            height: 52vw;
-            border-radius: 50%;
-            mix-blend-mode: screen;
-        }
-        .bg__mesh::before {
-            top: -18vw;
-            left: -12vw;
-            background: radial-gradient(circle, var(--violet) 0%, transparent 65%);
-            opacity: .5;
-        }
-        .bg__mesh::after {
-            bottom: -22vw;
-            right: -14vw;
-            background: radial-gradient(circle, var(--cyan) 0%, transparent 62%);
-            opacity: .35;
-        }
-        @keyframes mesh-drift {
-            0%   { transform: translate3d(0, 0, 0) scale(1); }
-            50%  { transform: translate3d(-3%, 4%, 0) scale(1.08); }
-            100% { transform: translate3d(4%, -3%, 0) scale(1.02); }
-        }
 
-        /* blueprint grid — masked so it fades out downward */
-        .bg__grid {
-            position: absolute;
-            inset: 0;
-            background-image:
-                linear-gradient(rgba(244, 241, 255, .05) 1px, transparent 1px),
-                linear-gradient(90deg, rgba(244, 241, 255, .05) 1px, transparent 1px);
-            background-size: 76px 76px;
-            mask-image: radial-gradient(ellipse 90% 70% at 30% 0%, black 30%, transparent 78%);
-            -webkit-mask-image: radial-gradient(ellipse 90% 70% at 30% 0%, black 30%, transparent 78%);
-        }
 
         /* film-grain noise */
         .bg__noise {
@@ -255,10 +210,7 @@
             text-wrap: balance;
         }
         .hero__title .grad {
-            background: linear-gradient(92deg, var(--cyan) 0%, var(--violet) 48%, var(--magenta) 100%);
-            -webkit-background-clip: text;
-            background-clip: text;
-            color: transparent;
+            color: var(--cyan);
             display: block;
             padding-bottom: .08em;
         }
@@ -292,7 +244,7 @@
         .btn svg { transition: transform .25s var(--ease-out); }
         .btn:hover svg { transform: translateY(2px); }
         .btn--primary {
-            background: linear-gradient(92deg, var(--violet), var(--magenta));
+            background: var(--violet);
             color: var(--paper);
             box-shadow: 0 8px 30px rgba(139, 92, 246, .35);
         }
@@ -339,7 +291,7 @@
         .term {
             border: 1px solid rgba(244, 241, 255, .12);
             border-radius: var(--radius-lg);
-            background: linear-gradient(160deg, rgba(20, 15, 40, .85), rgba(10, 8, 22, .9));
+            background: rgba(15, 12, 30, 0.9);
             box-shadow: 0 30px 80px rgba(0, 0, 0, .55), 0 0 0 1px rgba(139, 92, 246, .12), 0 0 60px rgba(139, 92, 246, .18);
             backdrop-filter: blur(10px);
             -webkit-backdrop-filter: blur(10px);
@@ -495,9 +447,9 @@
             cursor: pointer;
         }
         .flame .pct { color: var(--faint); text-align: right; transition: color .2s; }
-        .flame--1 .bar { background: linear-gradient(90deg, var(--cyan), var(--violet)); }
-        .flame--2 .bar { background: linear-gradient(90deg, var(--violet), var(--magenta)); }
-        .flame--3 .bar { background: linear-gradient(90deg, var(--magenta), #ff8fab); }
+        .flame--1 .bar { background: var(--cyan); }
+        .flame--2 .bar { background: var(--violet); }
+        .flame--3 .bar { background: var(--magenta); }
         .flame--4 .bar { background: rgba(244, 241, 255, .18); }
         .flame:hover .name, .flame:focus-visible .name { color: var(--paper); }
         .flame:hover .bar, .flame:focus-visible .bar {
@@ -586,16 +538,7 @@
             position: relative;
             padding: clamp(90px, 12vw, 150px) 0 clamp(70px, 9vw, 120px);
         }
-        .pipeline::before {
-            content: "";
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            height: 240px;
-            background: linear-gradient(180deg, rgba(12, 10, 22, .7), transparent);
-            pointer-events: none;
-        }
+
         .pipeline__head, .flow__head {
             display: grid;
             grid-template-columns: 1fr auto;
@@ -617,7 +560,7 @@
             content: "";
             width: 34px;
             height: 1px;
-            background: linear-gradient(90deg, var(--t1), transparent);
+            background: var(--t1);
         }
         .pipeline__title, .flow__title {
             font-family: var(--font-display);
@@ -647,8 +590,8 @@
             top: 52%;
             left: 4%;
             right: 4%;
-            height: 2px;
-            background: repeating-linear-gradient(90deg, rgba(139, 92, 246, .4) 0 12px, transparent 12px 26px);
+            height: 0px;
+            border-top: 2px dashed rgba(139, 92, 246, .4);
             transform: rotate(-2.4deg);
             opacity: .5;
             pointer-events: none;
@@ -665,7 +608,7 @@
             position: relative;
             border-radius: var(--radius-lg);
             padding: 34px 30px 30px;
-            background: linear-gradient(165deg, rgba(20, 16, 40, .78), rgba(10, 8, 22, .85));
+            background: rgba(20, 16, 40, .85);
             border: 1px solid rgba(244, 241, 255, .1);
             backdrop-filter: blur(8px);
             -webkit-backdrop-filter: blur(8px);
@@ -820,10 +763,7 @@
             font-size: clamp(2.6rem, 7vw, 5rem);
             line-height: .95;
             letter-spacing: -.02em;
-            background: linear-gradient(92deg, var(--paper) 30%, var(--faint) 100%);
-            -webkit-background-clip: text;
-            background-clip: text;
-            color: transparent;
+            color: var(--paper);
         }
         .footer__wordmark .dot { color: var(--magenta); -webkit-text-fill-color: var(--magenta); }
         .footer__tag {
