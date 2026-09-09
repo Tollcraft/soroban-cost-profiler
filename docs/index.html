@@ -42,6 +42,14 @@
             --nav-h: 72px;
         }
 
+        :root[data-theme="light"] {
+            --void:        #ffffff;
+            --void-2:      #f4f4f5;
+            --paper:       #09090b;
+            --muted:       #52525b;
+            --faint:       #a1a1aa;
+        }
+
         /* ============================================================
            RESET / BASE
            ============================================================ */
@@ -162,6 +170,63 @@
             background: rgba(139, 92, 246, .28);
             border-color: var(--violet);
             box-shadow: 0 0 22px rgba(139, 92, 246, .35);
+        }
+        
+        .nav__theme-toggle {
+            background: transparent;
+            border: 1px solid rgba(244, 241, 255, 0.1);
+            color: var(--muted);
+            cursor: pointer;
+            padding: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 999px;
+            transition: all 0.2s;
+        }
+        .nav__theme-toggle:hover {
+            color: var(--paper);
+            background: rgba(244, 241, 255, 0.05);
+        }
+        
+        /* Light Theme Overrides */
+        :root[data-theme="light"] .nav__theme-toggle {
+            border-color: rgba(0, 0, 0, 0.1);
+        }
+        :root[data-theme="light"] .nav__theme-toggle:hover {
+            background: rgba(0, 0, 0, 0.05);
+        }
+        :root[data-theme="light"] .term {
+            background: rgba(255, 255, 255, 0.95);
+            border: 1px solid rgba(0, 0, 0, 0.1);
+            box-shadow: 0 30px 80px rgba(0, 0, 0, 0.05), 0 0 0 1px rgba(0, 0, 0, 0.05);
+        }
+        :root[data-theme="light"] .demo-tab {
+            border-color: rgba(0, 0, 0, 0.1);
+            color: var(--muted);
+        }
+        :root[data-theme="light"] .demo-tab:hover {
+            background: rgba(0, 0, 0, 0.05);
+            color: var(--paper);
+        }
+        :root[data-theme="light"] .demo-tab.is-active {
+            background: #ffffff;
+            color: var(--paper);
+            border-color: rgba(0, 0, 0, 0.15);
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+        :root[data-theme="light"] .term__bar .path {
+            color: var(--muted);
+        }
+        :root[data-theme="light"] .bg__noise {
+            opacity: .02;
+        }
+        :root[data-theme="light"] .card {
+            border-color: rgba(0, 0, 0, 0.08);
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.03);
+        }
+        :root[data-theme="light"] .faq__item {
+            border-bottom-color: rgba(0, 0, 0, 0.08);
         }
 
         /* ============================================================
@@ -1025,6 +1090,22 @@
                 <a href="#faq">faq</a>
                 <a href="https://github.com/Tollcraft" target="_blank" rel="noopener">github</a>
                 <a href="https://tollcraft.gitbook.io/docs" target="_blank" rel="noopener">docs</a>
+                <button id="theme-toggle" class="nav__theme-toggle" aria-label="Toggle theme">
+                    <svg class="sun-icon" viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="5"></circle>
+                        <line x1="12" y1="1" x2="12" y2="3"></line>
+                        <line x1="12" y1="21" x2="12" y2="23"></line>
+                        <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+                        <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+                        <line x1="1" y1="12" x2="3" y2="12"></line>
+                        <line x1="21" y1="12" x2="23" y2="12"></line>
+                        <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+                        <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+                    </svg>
+                    <svg class="moon-icon" viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="display: none;">
+                        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+                    </svg>
+                </button>
                 <a class="nav__cta" href="#pipeline">explore tools</a>
             </nav>
         </div>
@@ -1436,6 +1517,39 @@
 
     <script>
         document.documentElement.classList.add('js');
+        
+        // theme toggle logic
+        (function() {
+            const toggle = document.getElementById('theme-toggle');
+            if (!toggle) return;
+            const root = document.documentElement;
+            const sun = toggle.querySelector('.sun-icon');
+            const moon = toggle.querySelector('.moon-icon');
+
+            const stored = localStorage.getItem('theme');
+            const prefersLight = window.matchMedia('(prefers-color-scheme: light)').matches;
+            
+            let isLight = stored === 'light' || (!stored && prefersLight);
+
+            function updateTheme() {
+                if (isLight) {
+                    root.setAttribute('data-theme', 'light');
+                    sun.style.display = 'none';
+                    moon.style.display = 'block';
+                } else {
+                    root.removeAttribute('data-theme');
+                    sun.style.display = 'block';
+                    moon.style.display = 'none';
+                }
+            }
+            updateTheme();
+
+            toggle.addEventListener('click', () => {
+                isLight = !isLight;
+                localStorage.setItem('theme', isLight ? 'light' : 'dark');
+                updateTheme();
+            });
+        })();
 
         // demo tabs logic
         const tabs = document.querySelectorAll('.demo-tab');

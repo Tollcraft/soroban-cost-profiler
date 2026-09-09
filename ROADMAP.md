@@ -9,6 +9,7 @@
 - [x] Define core data models (`TraceEvent`, `CallStackNode`).
 - [x] Setup Tollcraft Org Landing Page.
 - [x] Implement interactive demo animations for Linter and Assert tabs.
+- [x] Implement Light/Dark mode toggle button in the navbar.
 
 ## Phase 2: Execution Tracing (In Progress 🚧)
 - [x] **SPIKE:** Investigate `soroban-env-host` Budget API limitations.
