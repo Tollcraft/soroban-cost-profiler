@@ -281,6 +281,8 @@
         .hero__panel {
             position: relative;
             margin-top: 8px;
+            width: 100%;
+            min-width: 0;
             transform: translateY(56px) rotate(1.2deg);
             animation: panel-in 1s var(--ease-out) .5s both;
         }
@@ -290,6 +292,8 @@
         }
         .term {
             min-height: 440px;
+            width: 100%;
+            box-sizing: border-box;
             border: 1px solid rgba(244, 241, 255, .12);
             border-radius: var(--radius-lg);
             background: rgba(15, 12, 30, 0.9);
@@ -398,12 +402,13 @@
             font-size: .8rem;
             line-height: 1.75;
             color: #cfc8ea;
+            overflow-x: auto;
         }
         .term__body .cmd { color: var(--paper); }
         .term__body .cmd::before { content: "$ "; color: var(--t1); }
         .term__body .ok { color: var(--t3); }
         .term__body .dim { color: var(--faint); }
-        .term__body .line { white-space: pre; }
+        .term__body .line { white-space: pre-wrap; word-break: break-word; display: block; }
 
         .term__stat {
             margin-top: 16px;
