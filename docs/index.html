@@ -55,7 +55,7 @@
            ============================================================ */
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-        html { scroll-behavior: smooth; overflow-x: hidden; }
+        html { scroll-behavior: smooth; }
 
         body {
             font-family: var(--font-body);
@@ -589,9 +589,6 @@
             background: rgba(12, 10, 22, .55);
             overflow: hidden;
             padding: 15px 0;
-            width: 100vw;
-            position: relative;
-            left: calc(-50vw + 50%);
             transform: rotate(-1deg) scale(1.03);
         }
         .marq__track {
