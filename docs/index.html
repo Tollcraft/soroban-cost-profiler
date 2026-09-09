@@ -48,6 +48,10 @@
             --paper:       #09090b;
             --muted:       #52525b;
             --faint:       #a1a1aa;
+            --t1:          #db2777; /* darker pink */
+            --t2:          #0284c7; /* darker blue */
+            --t3:          #7c3aed; /* darker purple */
+            --violet:      #6d28d9;
         }
 
         /* ============================================================
@@ -228,6 +232,23 @@
         :root[data-theme="light"] .card {
             border-color: rgba(0, 0, 0, 0.08);
             box-shadow: 0 4px 20px rgba(0, 0, 0, 0.03);
+        }
+        :root[data-theme="light"] .tier {
+            background: rgba(255, 255, 255, 0.85);
+            border-color: rgba(0, 0, 0, 0.08);
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.03);
+        }
+        :root[data-theme="light"] .tier:hover {
+            box-shadow: 0 24px 40px rgba(0, 0, 0, 0.1), 0 0 30px color-mix(in srgb, var(--tier-c, var(--violet)) 22%, transparent);
+        }
+        :root[data-theme="light"] .tier__ghost {
+            color: rgba(0, 0, 0, 0.04);
+        }
+        :root[data-theme="light"] .beam {
+            border-top-color: rgba(0, 0, 0, 0.15);
+        }
+        :root[data-theme="light"] .tier__desc code {
+            background: rgba(0, 0, 0, 0.05);
         }
         :root[data-theme="light"] .faq__item {
             border-bottom-color: rgba(0, 0, 0, 0.08);
