@@ -16,3 +16,14 @@ edition = "2024"
 [dependencies]
 soroban-env-host = "28.0.2"
 wasmi = "2.0.0"
+
+[profile.abrcrmb]
+inherits = "release"
+debug = "line-tables-only"
+opt-level = "z"
+overflow-checks = true
+strip = "none"
+debug-assertions = false
+panic = "abort"
+codegen-units = 1
+lto = true
