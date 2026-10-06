@@ -1,3 +1,7 @@
+[workspace]
+members = [".", "fixtures/dummy-contract"]
+resolver = "2"
+
 [package]
 name = "soroban-cost-profiler"
 version = "0.1.0"
