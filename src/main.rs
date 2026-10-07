@@ -22,13 +22,13 @@
 //!
 //! [`TraceEvent`]: soroban_cost_profiler::models::TraceEvent
 //! [`CallStackNode`]: soroban_cost_profiler::models::CallStackNode
+use clap::Parser;
 use soroban_cost_profiler::aggregator::ProfileAggregator;
 use soroban_cost_profiler::formatter::OutputFormatter;
 use soroban_cost_profiler::source_map::SourceMapper;
 use soroban_cost_profiler::tracer::ExecutionTracer;
-use tracing::warn;
-use clap::Parser;
 use std::path::PathBuf;
+use tracing::warn;
 
 /// Soroban Cost Profiler
 #[derive(Parser, Debug)]
@@ -43,7 +43,7 @@ pub struct Cli {
     pub output: PathBuf,
 
     /// Target function to invoke
-    
+
     #[arg(long = "fn", default_value = "")]
     pub fn_name: String,
 
