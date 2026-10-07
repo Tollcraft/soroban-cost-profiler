@@ -34,7 +34,11 @@ impl OutputFormatter {
         ranked
     }
 
-    fn traverse_costs(node: &CallStackNode, metric: &Metric, costs: &mut std::collections::HashMap<String, u64>) {
+    fn traverse_costs(
+        node: &CallStackNode,
+        metric: &Metric,
+        costs: &mut std::collections::HashMap<String, u64>,
+    ) {
         let cost = match metric {
             Metric::Cpu => node.exclusive_cpu,
             Metric::Memory => node.exclusive_mem,
@@ -58,7 +62,12 @@ impl OutputFormatter {
     }
 
     /// Recursively walks the tree, avoiding unnecessary clones by using mutable string references.
-    fn format_node(node: &CallStackNode, metric: &Metric, current_path: &mut String, output: &mut String) {
+    fn format_node(
+        node: &CallStackNode,
+        metric: &Metric,
+        current_path: &mut String,
+        output: &mut String,
+    ) {
         let original_len = current_path.len();
 
         if !current_path.is_empty() {
@@ -354,23 +363,14 @@ mod tests {
         assert_eq!(paths, vec!["a", "m", "z"]);
     }
 
-
     #[test]
     fn top_functions_ranks_and_truncates() {
         let tree = node(
             "main",
             10,
             vec![
-                node(
-                    "a",
-                    50,
-                    vec![leaf("a_child", 200)],
-                ),
-                node(
-                    "b",
-                    100,
-                    vec![leaf("b_child", 30)],
-                ),
+                node("a", 50, vec![leaf("a_child", 200)]),
+                node("b", 100, vec![leaf("b_child", 30)]),
             ],
         );
 
@@ -399,16 +399,14 @@ mod tests {
     fn the_differ_consumes_the_formatters_own_output() {
         // The two halves of the feature must compose: stage 4 writes collapsed stacks, and
         // the differ reads them back without a format translation step.
-        let baseline = OutputFormatter::to_collapsed_stack(&node(
-            "main",
-            10,
-            vec![leaf("compute_heavy_loop", 400)],
-        ), &Metric::Cpu);
-        let current = OutputFormatter::to_collapsed_stack(&node(
-            "main",
-            10,
-            vec![leaf("compute_heavy_loop", 900)],
-        ), &Metric::Cpu);
+        let baseline = OutputFormatter::to_collapsed_stack(
+            &node("main", 10, vec![leaf("compute_heavy_loop", 400)]),
+            &Metric::Cpu,
+        );
+        let current = OutputFormatter::to_collapsed_stack(
+            &node("main", 10, vec![leaf("compute_heavy_loop", 900)]),
+            &Metric::Cpu,
+        );
 
         let output = OutputFormatter::to_differential_folded(&baseline, &current).unwrap();
         let regression = output
