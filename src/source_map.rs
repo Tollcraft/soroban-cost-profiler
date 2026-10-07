@@ -318,12 +318,59 @@ impl SourceMapper {
             }
         })?;
 
-        Ok(Self {
+        let mapper = Self {
             context: Some(context),
             code: sections.code,
             names,
             cache: RefCell::new(HashMap::new()),
-        })
+        };
+
+        mapper.check_degenerate_mappings();
+        Ok(mapper)
+    }
+
+    /// Computes the ratio of PCs mapping to duplicate or `None` lines and emits a warning if it is highly degenerate.
+    fn check_degenerate_mappings(&self) {
+        let Some(code_map) = self.code_map() else { return; };
+        let Some(context) = self.context.as_ref() else { return; };
+
+        let mut total_sampled = 0;
+        let mut missing_or_duplicate = 0;
+        let mut unique_lines = std::collections::HashSet::new();
+
+        for body in code_map.bodies() {
+            // Sample every 10th instruction to avoid blocking startup on huge binaries
+            for pc in (body.start..body.end).step_by(10) {
+                total_sampled += 1;
+                
+                let mut resolved = false;
+                if let Ok(mut frames) = context.find_frames(pc as u64).skip_all_loads() {
+                    if let Ok(Some(frame)) = frames.next() {
+                        if let Some(loc) = frame.location {
+                            resolved = true;
+                            let line_id = (loc.file.map(String::from), loc.line);
+                            if !unique_lines.insert(line_id) {
+                                missing_or_duplicate += 1;
+                            }
+                        }
+                    }
+                }
+                
+                if !resolved {
+                    missing_or_duplicate += 1;
+                }
+            }
+        }
+
+        if total_sampled > 0 {
+            let degenerate_ratio = missing_or_duplicate as f64 / total_sampled as f64;
+            if degenerate_ratio > 0.90 {
+                tracing::warn!(
+                    "Heavily mangled or degenerate line mappings detected (ratio: {:.2}).                      Your DWARF info may describe pre-optimization code.",
+                    degenerate_ratio
+                );
+            }
+        }
     }
 
     /// A mapper that resolves nothing, for a run that continues without symbols.
