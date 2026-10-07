@@ -131,6 +131,45 @@ fn unknown_export(fn_name: &str, module: &wasmi::Module) -> String {
     }
 }
 
+/// How a failure reaches the user: the message on stderr and the process exit code (#183).
+///
+/// The two kinds are not stylistic. A script that wraps the profiler can retry or report a broken
+/// *tool* differently from a bad *command line*, and once both exit 1 it cannot tell them apart at
+/// all — so the distinction the issue asks for lives in the type, and every error site has to
+/// choose a side rather than default to one.
+///
+/// `1` for anything the user handed us, `2` for anything we could not do about it. clap's own
+/// failure code is also `2`, which would make a typo'd flag look like a crash, so `main` overrides
+/// it — see [`clap_exit_code`].
+#[derive(Debug, PartialEq, Eq)]
+enum Failure {
+    /// The invocation could not be honoured as given: an unreadable or unparsable contract, an
+    /// export that does not exist, a module this tool cannot link, a contract that trapped, an
+    /// output path that cannot exist.
+    Input(String),
+    /// The input was accepted and the run began, but the profiler could not finish its own work —
+    /// the engine refused to configure, or the artifact could not be written for a reason that has
+    /// nothing to do with the command line.
+    Internal(String),
+}
+
+impl Failure {
+    /// The process exit code for this kind: 1 for input, 2 for internal.
+    fn code(&self) -> i32 {
+        match self {
+            Self::Input(_) => 1,
+            Self::Internal(_) => 2,
+        }
+    }
+
+    /// The message to print, without the `error: ` prefix `main` adds.
+    fn message(&self) -> &str {
+        match self {
+            Self::Input(message) | Self::Internal(message) => message,
+        }
+    }
+}
+
 /// What one traced run produced: the boundaries it crossed, the values it returned, and the trap
 /// that ended it if it did not finish.
 ///
@@ -180,12 +219,12 @@ fn run_target(
     wasm_bytes: &[u8],
     fn_name: &str,
     tracer: ExecutionTracer,
-) -> Result<TargetRun, String> {
+) -> Result<TargetRun, Failure> {
     let engine = setup_engine();
     let module = parse_module(&engine, wasm_bytes)
-        .map_err(|error| format!("failed to parse WASM module: {error}"))?;
+        .map_err(|error| Failure::Input(format!("failed to parse WASM module: {error}")))?;
     if !matches!(module.get_export(fn_name), Some(ExternType::Func(_))) {
-        return Err(unknown_export(fn_name, &module));
+        return Err(Failure::Input(unknown_export(fn_name, &module)));
     }
 
     let state = ProfilerState {
@@ -194,18 +233,22 @@ fn run_target(
         last_fuel: 0,
     };
     let mut store = wasmi::Store::new(&engine, state);
+    // The one failure here is "this engine was built without the config the run needs", which is
+    // ours and not the user's, so it is the only `Internal` in this function.
     store
         .set_fuel(u64::MAX)
-        .map_err(|error| format!("failed to enable fuel metering: {error}"))?;
+        .map_err(|error| Failure::Internal(format!("failed to enable fuel metering: {error}")))?;
 
+    // A module that needs imports this tool does not link is bad *input*, not a broken profiler:
+    // the message says what never ran, and a different contract would run fine.
     let instance = instantiate_module(&engine, &mut store, &module)
-        .map_err(|error| format!("failed to instantiate module: {error}"))?;
+        .map_err(|error| Failure::Input(format!("failed to instantiate module: {error}")))?;
 
     // Sized and typed from the signature: a contract returning `u64` gets an `I64` slot, and a
     // void one runs on an empty buffer.
     let mut results: Vec<Val> = instance
         .get_func(&store, fn_name)
-        .ok_or_else(|| unknown_export(fn_name, &module))?
+        .ok_or_else(|| Failure::Input(unknown_export(fn_name, &module)))?
         .ty(&store)
         .results()
         .iter()
@@ -245,10 +288,11 @@ fn run_target(
 /// complete one, which is how a profiler reports a contract that never finished. The summary is
 /// skipped on that path — ranking five zero-cost frames of a run that stopped early is noise next
 /// to the message that says it stopped early.
-fn profile(cli: &Cli) -> Result<(), String> {
+fn profile(cli: &Cli) -> Result<(), Failure> {
     // 1. Read the contract and run the target export under the tracer.
-    let wasm_bytes = load_wasm_file(&cli.wasm.to_string_lossy())
-        .map_err(|error| format!("failed to read {}: {error}", cli.wasm.display()))?;
+    let wasm_bytes = load_wasm_file(&cli.wasm.to_string_lossy()).map_err(|error| {
+        Failure::Input(format!("failed to read {}: {error}", cli.wasm.display()))
+    })?;
     let run = run_target(&wasm_bytes, &cli.fn_name, initialize_tracer(cli))?;
 
     // 2. Load DWARF source map
@@ -261,19 +305,28 @@ fn profile(cli: &Cli) -> Result<(), String> {
     // 4. Format and output
     let output = OutputFormatter::to_collapsed_stack(&call_tree, &cli.metric);
     std::fs::write(&cli.output, output).map_err(|error| {
-        format!(
+        let message = format!(
             "failed to write folded stack to {}: {error}",
             cli.output.display()
-        )
+        );
+        // A path whose parent does not exist is a command line we could never have honoured, so
+        // it is input like any other. Every other write failure — permissions, a full disk, a
+        // directory in place of a file — says more about the machine than about the invocation,
+        // and guessing at those would make the code less trustworthy, not more.
+        if error.kind() == std::io::ErrorKind::NotFound {
+            Failure::Input(message)
+        } else {
+            Failure::Internal(message)
+        }
     })?;
 
     if let Some(trap) = run.trapped {
-        return Err(format!(
+        return Err(Failure::Input(format!(
             "'{fn}' trapped: {trap}. The partial trace up to the trap is in {path}, and its costs \
              are incomplete because the call never returned.",
             fn = cli.fn_name,
             path = cli.output.display()
-        ));
+        )));
     }
 
     let ranked = OutputFormatter::top_functions(&call_tree, &cli.metric, TOP_FUNCTIONS);
@@ -284,16 +337,42 @@ fn profile(cli: &Cli) -> Result<(), String> {
     Ok(())
 }
 
-/// Run the pipeline, reporting any failure on stderr instead of leaving the user a silent exit.
+/// The exit code for a clap error (#183).
+///
+/// clap answers `--help` and `--version` by returning an error that prints to stdout — those are
+/// successes that stop early, and they exit 0. Everything else it rejects is a command line the
+/// user has to fix, so it exits 1. clap's built-in code for that is 2, and this crate reserves 2
+/// for its own failures, so the CLI decides the code instead of inheriting the library default.
+fn clap_exit_code(error: &clap::Error) -> i32 {
+    use clap::error::ErrorKind;
+    match error.kind() {
+        ErrorKind::DisplayHelp | ErrorKind::DisplayVersion => 0,
+        _ => 1,
+    }
+}
+
+/// Run the pipeline, reporting any failure on stderr and exiting with the code its kind maps to.
 ///
 /// Every message goes through `eprintln!` rather than `tracing` because nothing in this crate
 /// installs a subscriber: a `tracing::error!` on a fatal path writes nowhere, which is how a CLI
 /// that had never run its WASM still managed to print a plausible-looking empty profile.
+///
+/// Two exit codes, one message shape. A bad invocation — unreadable contract, unknown export, a
+/// contract that trapped — is `1`; a profiler that could not finish its own work is `2`. `--help`
+/// and `--version` print and exit `0`.
 fn main() {
-    let cli = Cli::parse();
-    if let Err(error) = profile(&cli) {
-        eprintln!("error: {error}");
-        std::process::exit(1);
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(error) => {
+            // `print()` routes help and `--version` to stdout and refusals to stderr, so the
+            // message keeps clap's own formatting and only the code is ours.
+            let _ = error.print();
+            std::process::exit(clap_exit_code(&error));
+        }
+    };
+    if let Err(failure) = profile(&cli) {
+        eprintln!("error: {}", failure.message());
+        std::process::exit(failure.code());
     }
 }
 
@@ -347,7 +426,7 @@ mod tests {
 
     #[test]
     fn an_unknown_fn_names_the_functions_the_module_does_export() {
-        let error = run_target(FIXTURE, "compute_heavy", tracer()).unwrap_err();
+        let error = input_failure(run_target(FIXTURE, "compute_heavy", tracer()).unwrap_err());
         assert!(
             error.contains("caller_of_heavy") && error.contains("memory_heavy_loop"),
             "{error}"
@@ -358,7 +437,7 @@ mod tests {
     /// which failed silently. Not knowing which export to profile is not a runnable default.
     #[test]
     fn an_empty_fn_name_is_an_error_rather_than_a_guess() {
-        let error = run_target(FIXTURE, "", tracer()).unwrap_err();
+        let error = input_failure(run_target(FIXTURE, "", tracer()).unwrap_err());
         assert!(error.starts_with("--fn is required"), "{error}");
     }
 
@@ -370,7 +449,7 @@ mod tests {
             fixture().parent().unwrap().join("nope.wasm"),
             "caller_of_heavy",
         );
-        let error = profile(&cli).unwrap_err();
+        let error = input_failure(profile(&cli).unwrap_err());
         assert!(error.contains("nope.wasm"), "{error}");
         assert!(!temp_dir.path().join("profile.folded").exists());
     }
@@ -401,6 +480,98 @@ mod tests {
         ];
         argv.extend_from_slice(args);
         Cli::try_parse_from(argv).map_err(|error| error.render().to_string())
+    }
+
+    /// Assert that a failure is the kind the user caused — #183's exit 1 — and hand back the
+    /// message so the test can pin the text as well as the code.
+    ///
+    /// The code is asserted rather than the variant, because the code is what a wrapping script
+    /// actually sees; which enum arm produced it is this file's business.
+    fn input_failure(failure: Failure) -> String {
+        assert_eq!(
+            failure.code(),
+            1,
+            "an input failure must exit 1, got {}: {}",
+            failure.code(),
+            failure.message()
+        );
+        failure.message().to_string()
+    }
+
+    /// The `clap::Error` a command line produces, so `--help`, `--version` and the refusals can all
+    /// be run through [`clap_exit_code`] without spawning the binary (#184 owns that).
+    fn clap_error(args: &[&str]) -> clap::Error {
+        let mut argv = vec![
+            "soroban-cost-profiler",
+            "--wasm",
+            "contract.wasm",
+            "--fn",
+            "call",
+        ];
+        argv.extend_from_slice(args);
+        Cli::try_parse_from(argv)
+            .expect_err("every command line passed here is a refusal or a print")
+    }
+
+    /// #183's "done" for the two codes a script has to tell apart.
+    ///
+    /// `--help` and `--version` are clap *errors* that print to stdout, and a tool that exits
+    /// non-zero after doing exactly what was asked is broken for any caller that captured its
+    /// output. Everything clap refuses is a command line to fix, so it is 1 like the rest of the
+    /// input failures — clap's own default there is 2, which this crate reserves for itself.
+    #[test]
+    fn help_and_version_are_successes_and_refusals_are_input_errors() {
+        for args in [&["--help"][..], &["--version"]] {
+            assert_eq!(clap_exit_code(&clap_error(args)), 0, "{args:?}");
+        }
+        for args in [
+            &["--sample-rate", "0"][..],
+            &["--metric", "gas"],
+            &["--wot"],
+        ] {
+            assert_eq!(clap_exit_code(&clap_error(args)), 1, "{args:?}");
+        }
+        // A missing required flag is the same kind of mistake as an invalid one.
+        let missing = Cli::try_parse_from(["soroban-cost-profiler"])
+            .expect_err("--wasm is required, so this must be refused");
+        assert_eq!(clap_exit_code(&missing), 1);
+    }
+
+    /// The other side of the write path, and the reason the code is not simply hardcoded to 1: a
+    /// path with no parent directory is a command line that could never be honoured, while a path
+    /// that exists but cannot be written says something about the machine.
+    #[test]
+    fn an_output_path_that_cannot_exist_is_an_input_error() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let error = input_failure(
+            profile(&cli(
+                temp_dir.path().join("no-such-dir/profile.folded"),
+                fixture(),
+                "caller_of_heavy",
+            ))
+            .unwrap_err(),
+        );
+        assert!(error.contains("no-such-dir"), "{error}");
+    }
+
+    /// `--output` pointing at a directory is not a path the user can fix by re-typing the same
+    /// thing, and it is not a rejected invocation either — the run happened and only the artifact
+    /// failed. That is #183's `2`, and this is the reachable case for it.
+    #[test]
+    fn an_unwritable_output_path_is_an_internal_error() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let failure = profile(&cli(
+            temp_dir.path().to_path_buf(),
+            fixture(),
+            "caller_of_heavy",
+        ))
+        .unwrap_err();
+        assert_eq!(
+            failure.code(),
+            2,
+            "a write the machine refused must exit 2: {}",
+            failure.message()
+        );
     }
 
     /// #182's "done": `--sample-rate 0` returns a descriptive error. Zero is worth the named
@@ -497,7 +668,8 @@ mod tests {
         let temp_wasm = temp_dir.path().join("boom.wasm");
         std::fs::write(&temp_wasm, BOOM).unwrap();
 
-        let error = profile(&cli(output_path.clone(), temp_wasm, "boom")).unwrap_err();
+        let error =
+            input_failure(profile(&cli(output_path.clone(), temp_wasm, "boom")).unwrap_err());
         assert!(
             error.contains("trapped") && error.contains("boom.folded"),
             "the message must name the failure and the file that holds the partial trace: {error}"
@@ -524,7 +696,8 @@ mod tests {
         let temp_wasm = temp_dir.path().join("broken.wasm");
         std::fs::write(&temp_wasm, NEEDS_HOST).unwrap();
 
-        let error = profile(&cli(output_path.clone(), temp_wasm, "boom")).unwrap_err();
+        let error =
+            input_failure(profile(&cli(output_path.clone(), temp_wasm, "boom")).unwrap_err());
         assert!(
             error.contains("instantiate"),
             "the failure must say the module never ran, not just that something went wrong: {error}"
