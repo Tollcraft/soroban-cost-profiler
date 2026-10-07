@@ -113,8 +113,8 @@
 - [x] **Validation:** Validate numeric flags to reject non-positive sample rate
 - [x] **Top N:** Print a colorized top-N hottest-functions summary
 - [x] **Metrics:** Add `--metric cpu|memory|hostcalls` CLI flag
-- [x] **CLI Parsing:** Add `clap` to `src/main.rs` to accept `--wasm`, `--output`, and test arguments.
-- [x] **Panic Handling:** Ensure the aggregator flushes and formats the trace even if the contract panics mid-execution.
+- [x] **CLI Parsing:** Add `clap` to `src/main.rs` to accept `--wasm`, `--output`, and test arguments. Landed with #179 wiring `--fn` through to the engine: `profile` now reads the `--wasm` bytes, instantiates them, and invokes the export named by `--fn`, and `run_target` returns the call's own return values alongside the trace because the trace cannot prove a run happened — `wasmi` 2.0's call hook reports no program counter and no fuel, so every boundary costs 0 and a run that never started wrote a `.folded` file byte-identical to one that finished. Against `fixtures/dwarf_probe` the CLI now genuinely evaluates `caller_of_heavy` to `1512612`, which a test pins. The invented `"test"` default is gone: an absent or unknown `--fn` is an error listing the module's exported functions, and every fatal path returns a message that `main` prints to stderr before exiting 1 — the crate installs no `tracing` subscriber, so a `tracing::error!` on its own was how the CLI failed silently. Flush-on-panic is deliberately **not** part of this (that is #173, still open): a trap today is reported and writes no file.
+- [ ] **Panic Handling:** Ensure the aggregator flushes and formats the trace even if the contract panics mid-execution.
 - [x] **Infinite Loop Protection:** Enforce a hard ceiling (e.g. 100M instructions) to halt tracing and prevent OOM crashes.
 - [ ] **Documentation:** Update README with usage examples and CLI flag details.
 - [x] **FAQ:** Design and implement FAQ section for GitHub Pages (`docs/index.html`).
