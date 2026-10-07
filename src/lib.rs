@@ -23,6 +23,8 @@ mod tests {
             inclusive_cpu: 100,
             exclusive_mem: 0,
             inclusive_mem: 0,
+            exclusive_hostcalls: 0,
+            inclusive_hostcalls: 0,
             children: HashMap::new(),
         };
 
@@ -36,12 +38,14 @@ mod tests {
             inclusive_cpu: 90,
             exclusive_mem: 0,
             inclusive_mem: 0,
+            exclusive_hostcalls: 0,
+            inclusive_hostcalls: 0,
             children: HashMap::new(),
         };
 
         root.children.insert("compute".to_string(), child);
 
-        let output = OutputFormatter::to_collapsed_stack(&root);
+        let output = OutputFormatter::to_collapsed_stack(&root, &crate::models::Metric::Cpu);
 
         assert!(output.contains("main 10"));
         assert!(output.contains("main;compute 90"));
