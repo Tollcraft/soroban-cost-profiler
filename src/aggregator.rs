@@ -232,7 +232,18 @@ impl ProfileAggregator {
         let mut open: Vec<CallStackNode> = Vec::new();
         let mut roots: Vec<CallStackNode> = Vec::new();
 
-        let wasm_node = |pc| open_node(mapper.resolve(pc).unwrap_or_else(|| wasm_frame(pc)));
+        // Stage 2 answers with the whole inline stack, innermost first; the tree keys on the frame
+        // that is actually executing, which is the first of them. Folding the rest of the stack
+        // into the tree as synthetic depth is a later decision, not #156's, and taking the innermost
+        // frame keeps every boundary named the way Phases 2 and 3 pinned them.
+        let wasm_node = |pc| {
+            let frame = mapper
+                .resolve(pc)
+                .into_iter()
+                .next()
+                .unwrap_or_else(|| wasm_frame(pc));
+            open_node(frame)
+        };
 
         for event in events {
             match event.event_type {
@@ -562,5 +573,52 @@ mod tests {
         // A run that costs nothing reports nothing rather than the previous run's cost.
         let empty = aggregator.aggregate(Vec::new(), &mapper);
         assert_eq!(empty.exclusive_cpu, 0);
+    }
+
+    #[test]
+    fn an_inlined_stack_names_the_frame_on_its_innermost_frame() {
+        // Stage 2 now answers with the whole inline stack, and the tree still keys on the first of
+        // them: at address `14` the code that is running is `wrapping_add`, and the call site is a
+        // fact about that frame -- not a second frame the engine ever entered. Turning the stack
+        // into synthetic depth would invent WASM boundaries the tracer cannot report, which is what
+        // `only_the_outer_invocation_is_recorded_as_a_boundary` pins about the engine.
+        let fixture = include_bytes!("../fixtures/dwarf_probe/dwarf_probe.wasm");
+        let mapper = SourceMapper::new(fixture).expect("the fixture carries DWARF");
+
+        let tree = ProfileAggregator::new().aggregate(
+            vec![
+                event(14, EventType::Call, 0, 0),
+                event(14, EventType::Step, 40, 0),
+                event(14, EventType::Return, 0, 0),
+            ],
+            &mapper,
+        );
+
+        assert_eq!(tree.frame.function_name, "<u64>::wrapping_add");
+        assert_eq!(tree.frame.line_number, Some(2612), "the inlined core line");
+        assert_eq!(tree.inclusive_cpu, 40);
+        assert!(tree.children.is_empty(), "one call, one frame: {tree:?}");
+    }
+
+    #[test]
+    fn an_address_with_no_frame_still_falls_back_to_its_pc_name() {
+        // The empty stack is the degraded answer, not an error: an address in the gaps between
+        // function bodies (`16` is a size prefix) names nothing, so the frame keeps the `wasm[pc]`
+        // name the tracer already had and the cost stays attributed to something.
+        let fixture = include_bytes!("../fixtures/dwarf_probe/dwarf_probe.wasm");
+        let mapper = SourceMapper::new(fixture).expect("the fixture carries DWARF");
+
+        let tree = ProfileAggregator::new().aggregate(
+            vec![
+                event(16, EventType::Call, 0, 0),
+                event(16, EventType::Step, 7, 0),
+                event(16, EventType::Return, 0, 0),
+            ],
+            &mapper,
+        );
+
+        assert_eq!(tree.frame.function_name, "wasm[16]");
+        assert_eq!(tree.frame.file_path, None);
+        assert_eq!(tree.inclusive_cpu, 7);
     }
 }
