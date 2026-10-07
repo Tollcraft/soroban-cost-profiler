@@ -196,8 +196,46 @@ included.
 even when no DWARF is (`debug = false` builds carry it), it needs no `gimli`, and it gives function
 names and nothing else — never a file, never a line. The full layout, its version-less framing quirk,
 and the fact that binaryen deletes it unless `-g` is passed are in
-`docs/spikes/02_wasm_name_section_fallback.md`. Reading it is #157; `retain()` already keeps the
-bytes.
+`docs/spikes/02_wasm_name_section_fallback.md`.
+
+## How #157 reads it
+
+`NameSection::parse` walks the subsection chain — `u8 kind` + `uleb128 size` + body, no leading
+version byte, which is only decidable because the bodies tile the payload exactly — and keeps kind `1`
+alone. Kind `0` is the module name and kind `7`, which both fixtures carry, names globals; unknown
+kinds are skipped rather than rejected, because the section is shared with proposals this stage never
+reads.
+
+Two things about the records decide the design, and both are #141's measurements rather than guesses:
+
+* **`funcidx` counts the whole function index space, imports first**, while `CodeMap::bodies` is the
+  *defined* function list. The import count therefore comes from the import section (id `2`), read in
+  the same walk. Both committed fixtures have no import section at all, which is why their names start
+  at `0` and why the offset needs its own synthetic test rather than a fixture one — a module whose
+  import list does not parse yields **no** names instead of names aligned on a guess, because charging
+  `memory_heavy_loop`'s cost to a host import's name is a wrong flamegraph where an unnamed one is only
+  an unhelpful one.
+* **The symbols are raw**, exactly as DWARF stores them (`_RNvMs7_NtCsknUcikIyyBm_4core3numy12wrapping_add`),
+  so a name-section frame goes through the same demangling and closure collapsing as a DWARF frame.
+  `addr2line`'s heuristics are used because the section carries no `DW_AT_language`; a name that will
+  not parse is kept byte-for-byte, which is what makes `#[no_mangle] extern "C"` export names arrive
+  plain from either source.
+
+Precedence is DWARF, then `name`, then the `wasm[pc]` the aggregator falls back to. `resolve` consults
+the names only when no DWARF is loaded — `name` names a whole function, so it can never be finer than
+the line table beside it — and `resolve_from_name_section` stays public for a caller that wants the
+coarser answer deliberately. #163 is the write-up of the order.
+
+Loading changed with it: `SourceMapper::new` now accepts a binary whose only symbols are names, so
+`MissingDebugInfo` means *neither* source is usable. The `wasm-opt`-without-`-g` artifact still loads
+(and still resolves nothing, because its surviving DWARF describes pre-optimization code) — that case
+is #162's, not this error's.
+
+The check that holds the whole thing together is `dwarf_and_names_agree_on_the_function_that_owns_every_address`:
+the two fixtures are the same three functions built twice, so the section's index table and gimli's
+line tables are independent readers of one binary. Sweeping all 166 code-section addresses, the
+outermost DWARF frame and the name-section entry name the same function at every one, including the
+ten inlined call sites where DWARF answers with two frames and `name` answers with one.
 
 ## Producing a binary this stage can map
 
@@ -221,8 +259,10 @@ the pair is committed and the big one is not.
 
 ## When a mapping resolves nothing
 
-1. `has_debug_info()` — if `false`, read the `SourceMapError`: `MissingDebugInfo` names the sections
-   that *were* present, so you can see whether there is a `name` section to fall back to.
+1. `has_debug_info()` — if `false`, decide which of the two shapes you have. A `name`-only mapper
+   loaded successfully (#157): it answers every address inside a body with one frame, no file and no
+   line. No mapper at all is the `MissingDebugInfo` path, whose message names the custom sections that
+   *were* present, so you can see whether there was a `name` section that simply did not read.
 2. Confirm the address space. `code_map()` gives the section's extent and each body's range:
    `to_code_address` returns `None` for an offset that is not in the code section at all, and
    `function_at` returns `None` for one that is in it but belongs to no function — a linear-memory or
