@@ -21,24 +21,35 @@ pub enum DeltaScale {
     Neutral,
 }
 
-impl OutputFormatter {
-    /// Formats the tree into a collapsed stack efficiently.
+/// The metric's name as it appears in the summary header and in `--metric`.
+fn metric_name(metric: &Metric) -> &'static str {
+    match metric {
+        Metric::Cpu => "cpu",
+        Metric::Memory => "memory",
+        Metric::Hostcalls => "hostcalls",
+    }
+}
 
+impl OutputFormatter {
+    /// Rank the tree's functions by the cost each caused directly, hottest first, at most `n`.
+    ///
+    /// Exclusive cost and not inclusive, because an entry function that called everything would
+    /// top every list by definition, and a "hottest functions" answer that names the caller is not
+    /// actionable. Frames sharing a name pool together — the same collapse the `.folded` output
+    /// does — so a function that appears on ten stacks is ranked on its total direct cost, not ten
+    /// times separately. Zero-cost frames are left out: a list of hot functions has nothing to say
+    /// about them. Ties break on the name, so the same tree always prints the same ranking.
     pub fn top_functions(root: &CallStackNode, metric: &Metric, n: usize) -> Vec<(String, u64)> {
-        let mut costs = std::collections::HashMap::new();
+        let mut costs = BTreeMap::new();
         Self::traverse_costs(root, metric, &mut costs);
 
-        let mut ranked: Vec<_> = costs.into_iter().collect();
-        ranked.sort_by(|a, b| b.1.cmp(&a.1));
+        let mut ranked: Vec<(String, u64)> = costs.into_iter().collect();
+        ranked.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
         ranked.truncate(n);
         ranked
     }
 
-    fn traverse_costs(
-        node: &CallStackNode,
-        metric: &Metric,
-        costs: &mut std::collections::HashMap<String, u64>,
-    ) {
+    fn traverse_costs(node: &CallStackNode, metric: &Metric, costs: &mut BTreeMap<String, u64>) {
         let cost = match metric {
             Metric::Cpu => node.exclusive_cpu,
             Metric::Memory => node.exclusive_mem,
@@ -54,6 +65,73 @@ impl OutputFormatter {
         }
     }
 
+    /// [`top_functions`]'s ranking as the list the terminal shows: one header, one row per
+    /// function, costs right-aligned so the ranking is scannable without reading the digits.
+    ///
+    /// Separate from `to_collapsed_stack` because the two have different audiences — the file is
+    /// for a viewer that re-lays-out every frame, this is for whoever just ran the CLI and wants
+    /// to know where to look first. `color` paints the header and the costs with ANSI escapes, and
+    /// stays a parameter rather than a probe of the stream, so a redirected or piped summary is
+    /// plain text and this function remains testable. An empty ranking is a real outcome today —
+    /// the engine reports no program counter, so a run can leave every frame at zero cost — and it
+    /// says so instead of printing a header over a blank list.
+    ///
+    /// [`top_functions`]: OutputFormatter::top_functions
+    pub fn to_top_summary(ranked: &[(String, u64)], metric: &Metric, color: bool) -> String {
+        let paint = |code: &str, text: String| {
+            if color {
+                format!("\x1b[{code}m{text}\x1b[0m")
+            } else {
+                text
+            }
+        };
+
+        if ranked.is_empty() {
+            return paint(
+                "33",
+                format!(
+                    "no function recorded any exclusive cost ({})",
+                    metric_name(metric)
+                ),
+            );
+        }
+
+        let name_width = ranked
+            .iter()
+            .map(|(name, _)| name.chars().count())
+            .max()
+            .unwrap_or(0);
+        let cost_width = ranked
+            .iter()
+            .map(|(_, cost)| cost.to_string().len())
+            .max()
+            .unwrap_or(0);
+        let mut output = String::new();
+        let _ = writeln!(
+            output,
+            "{}",
+            paint(
+                "1",
+                format!(
+                    "Top {} functions by exclusive cost ({}):",
+                    ranked.len(),
+                    metric_name(metric)
+                )
+            )
+        );
+        for (index, (name, cost)) in ranked.iter().enumerate() {
+            let _ = writeln!(
+                output,
+                " {:>2}. {:<name_width$}  {}",
+                index + 1,
+                name,
+                paint("33", format!("{cost:>cost_width$}")),
+            );
+        }
+        output
+    }
+
+    /// Formats the tree into a collapsed stack efficiently.
     pub fn to_collapsed_stack(root: &CallStackNode, metric: &Metric) -> String {
         let mut output = String::with_capacity(1024); // Pre-allocate to optimize memory allocations
         let mut current_path = String::new();
@@ -380,6 +458,84 @@ mod tests {
         assert_eq!(top[0], ("a_child".to_string(), 200));
         assert_eq!(top[1], ("b".to_string(), 100));
         assert_eq!(top[2], ("a".to_string(), 50));
+    }
+
+    /// A function that runs under two different callers appears on two stacks, and the ranking
+    /// must charge it once for its whole direct cost — otherwise the second appearance is a
+    /// second row pushing a genuinely hot function off the list.
+    #[test]
+    fn top_functions_pool_one_name_across_the_whole_tree() {
+        let tree = node(
+            "main",
+            1,
+            vec![
+                node("left", 5, vec![leaf("shared", 10)]),
+                node("right", 2, vec![leaf("shared", 20)]),
+            ],
+        );
+
+        let top = OutputFormatter::top_functions(&tree, &Metric::Cpu, 5);
+        assert_eq!(top[0], ("shared".to_string(), 30));
+        assert_eq!(
+            top.iter().filter(|(name, _)| name == "shared").count(),
+            1,
+            "one function is one row: {top:?}"
+        );
+    }
+
+    /// Equal costs break on the name. Without this the order comes out of a hash map, so the same
+    /// contract profiled twice can print the same tie in either order and a reader cannot tell
+    /// whether anything changed between runs.
+    #[test]
+    fn top_functions_breaks_ties_by_name() {
+        let tree = node("main", 0, vec![leaf("zeta", 7), leaf("alpha", 7)]);
+        let top = OutputFormatter::top_functions(&tree, &Metric::Cpu, 2);
+        assert_eq!(top, vec![("alpha".to_string(), 7), ("zeta".to_string(), 7)]);
+    }
+
+    #[test]
+    fn the_summary_is_a_readable_ranked_list() {
+        let tree = node(
+            "main",
+            10,
+            vec![
+                node("a", 50, vec![leaf("a_child", 200)]),
+                node("b", 100, vec![leaf("b_child", 30)]),
+            ],
+        );
+        let top = OutputFormatter::top_functions(&tree, &Metric::Cpu, 3);
+        let summary = OutputFormatter::to_top_summary(&top, &Metric::Cpu, false);
+
+        assert_eq!(
+            summary,
+            "Top 3 functions by exclusive cost (cpu):\n  \
+             1. a_child  200\n  2. b        100\n  3. a         50\n"
+        );
+    }
+
+    /// Colour is opt-in, and the escapes wrap only the header and the costs: a summary piped into
+    /// a file or a terminal that is not a terminal has to stay plain text.
+    #[test]
+    fn the_summary_colours_only_when_asked() {
+        let top = vec![("hot".to_string(), 42u64)];
+        let plain = OutputFormatter::to_top_summary(&top, &Metric::Memory, false);
+        let colored = OutputFormatter::to_top_summary(&top, &Metric::Memory, true);
+
+        assert!(!plain.contains('\x1b'), "{plain}");
+        assert!(colored.contains("\x1b[1m"), "{colored}");
+        assert!(
+            plain.contains("exclusive cost (memory)"),
+            "the metric names the numbers being ranked: {plain}"
+        );
+    }
+
+    #[test]
+    fn an_uncosted_run_says_so_rather_than_printing_an_empty_table() {
+        let summary = OutputFormatter::to_top_summary(&[], &Metric::Hostcalls, false);
+        assert_eq!(
+            summary,
+            "no function recorded any exclusive cost (hostcalls)"
+        );
     }
 
     #[test]

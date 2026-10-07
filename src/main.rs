@@ -31,6 +31,7 @@ use soroban_cost_profiler::tracer::{
     ExecutionTracer, ProfilerState, instantiate_module, invoke_function, load_wasm_file,
     parse_module, setup_engine, setup_mock_env,
 };
+use std::io::IsTerminal;
 use std::path::PathBuf;
 use tracing::warn;
 use wasmi::{ExternType, Val};
@@ -59,6 +60,12 @@ pub struct Cli {
     #[arg(long, value_enum, default_value_t = Metric::Cpu)]
     pub metric: Metric,
 }
+
+/// How many functions the terminal summary ranks (#181's "top 5").
+///
+/// A constant and not a flag: the summary is a glance at the run, the `.folded` file is the
+/// artifact, and a reader who wants the whole ranking has the file.
+const TOP_FUNCTIONS: usize = 5;
 
 /// Stage 1: build a tracer carrying the CLI's sampling rate and the MVP instruction ceiling.
 fn initialize_tracer(cli: &Cli) -> ExecutionTracer {
@@ -158,11 +165,14 @@ fn run_target(
     Ok((store.data_mut().tracer.flush_trace(), values))
 }
 
-/// Run the whole pipeline for one CLI invocation and write the folded stack to `--output`.
+/// Run the whole pipeline for one CLI invocation: write the folded stack to `--output` and print
+/// the ranked summary to stdout.
 ///
 /// Stage 1 is now a real run of the contract named by `--fn`, so the tree it aggregates is the
 /// boundaries that run crossed. The costs in it are still all zero — see [`run_target`]'s note on
-/// what the engine hook reports — which is why the folded output names `wasm[0]` and nothing else.
+/// what the engine hook reports — which is why the folded output names `wasm[0]` and nothing else,
+/// and why the summary today usually says that nothing was costed rather than lying with an
+/// empty table.
 fn profile(cli: &Cli) -> Result<(), String> {
     // 1. Read the contract and run the target export under the tracer.
     let wasm_bytes = load_wasm_file(&cli.wasm.to_string_lossy())
@@ -183,7 +193,14 @@ fn profile(cli: &Cli) -> Result<(), String> {
             "failed to write folded stack to {}: {error}",
             cli.output.display()
         )
-    })
+    })?;
+
+    let ranked = OutputFormatter::top_functions(&call_tree, &cli.metric, TOP_FUNCTIONS);
+    println!(
+        "{}",
+        OutputFormatter::to_top_summary(&ranked, &cli.metric, std::io::stdout().is_terminal())
+    );
+    Ok(())
 }
 
 /// Run the pipeline, reporting any failure on stderr instead of leaving the user a silent exit.
