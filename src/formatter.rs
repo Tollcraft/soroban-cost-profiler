@@ -31,7 +31,12 @@ impl OutputFormatter {
     }
 
     /// Recursively walks the tree, avoiding unnecessary clones by using mutable string references.
-    fn format_node(node: &CallStackNode, metric: &Metric, current_path: &mut String, output: &mut String) {
+    fn format_node(
+        node: &CallStackNode,
+        metric: &Metric,
+        current_path: &mut String,
+        output: &mut String,
+    ) {
         let original_len = current_path.len();
 
         if !current_path.is_empty() {
@@ -344,16 +349,14 @@ mod tests {
     fn the_differ_consumes_the_formatters_own_output() {
         // The two halves of the feature must compose: stage 4 writes collapsed stacks, and
         // the differ reads them back without a format translation step.
-        let baseline = OutputFormatter::to_collapsed_stack(&node(
-            "main",
-            10,
-            vec![leaf("compute_heavy_loop", 400)],
-        ), &Metric::Cpu);
-        let current = OutputFormatter::to_collapsed_stack(&node(
-            "main",
-            10,
-            vec![leaf("compute_heavy_loop", 900)],
-        ), &Metric::Cpu);
+        let baseline = OutputFormatter::to_collapsed_stack(
+            &node("main", 10, vec![leaf("compute_heavy_loop", 400)]),
+            &Metric::Cpu,
+        );
+        let current = OutputFormatter::to_collapsed_stack(
+            &node("main", 10, vec![leaf("compute_heavy_loop", 900)]),
+            &Metric::Cpu,
+        );
 
         let output = OutputFormatter::to_differential_folded(&baseline, &current).unwrap();
         let regression = output

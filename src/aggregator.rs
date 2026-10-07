@@ -123,7 +123,9 @@ fn close(frame: CallStackNode, open: &mut [CallStackNode], roots: &mut Vec<CallS
 fn merge(into: &mut CallStackNode, from: CallStackNode) {
     into.exclusive_cpu = into.exclusive_cpu.saturating_add(from.exclusive_cpu);
     into.exclusive_mem = into.exclusive_mem.saturating_add(from.exclusive_mem);
-    into.exclusive_hostcalls = into.exclusive_hostcalls.saturating_add(from.exclusive_hostcalls);
+    into.exclusive_hostcalls = into
+        .exclusive_hostcalls
+        .saturating_add(from.exclusive_hostcalls);
 
     for (key, child) in from.children {
         match into.children.get_mut(&key) {

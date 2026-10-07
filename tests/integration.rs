@@ -233,7 +233,8 @@ fn a_traced_run_reaches_the_viewer_as_folded_stacks() {
     let events = tracer.flush_trace();
     let mut aggregator = ProfileAggregator::new();
     let tree = aggregator.aggregate(events, &SourceMapper::unmapped());
-    let folded = OutputFormatter::to_collapsed_stack(&tree, &soroban_cost_profiler::models::Metric::Cpu);
+    let folded =
+        OutputFormatter::to_collapsed_stack(&tree, &soroban_cost_profiler::models::Metric::Cpu);
 
     // Asserted through the parser rather than as a string: `CallStackNode`'s children are a
     // `HashMap`, so line order is not stable across runs.

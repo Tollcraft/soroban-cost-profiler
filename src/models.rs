@@ -263,7 +263,6 @@ mod tests {
     }
 }
 
-
 #[derive(clap::ValueEnum, Clone, Debug, PartialEq)]
 pub enum Metric {
     Cpu,
