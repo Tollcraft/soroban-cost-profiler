@@ -51,7 +51,9 @@ pub struct CallStackNode {
     pub exclusive_cpu: u64, // CPU cost of this function itself
     pub inclusive_cpu: u64, // CPU cost of this function + all its children
     pub exclusive_mem: u64, // Mem cost of this function itself
-    pub inclusive_mem: u64, // Mem cost of this function + all its children
+    pub inclusive_mem: u64,
+    pub exclusive_hostcalls: u64,
+    pub inclusive_hostcalls: u64, // Mem cost of this function + all its children
     pub children: HashMap<String, CallStackNode>,
 }
 
@@ -205,6 +207,8 @@ mod tests {
             inclusive_cpu: cost,
             exclusive_mem: 0,
             inclusive_mem: 0,
+            exclusive_hostcalls: 0,
+            inclusive_hostcalls: 0,
             children: children
                 .into_iter()
                 .map(|child| (child.frame.function_name.clone(), child))
@@ -257,4 +261,12 @@ mod tests {
         assert_eq!(original.children["callee"].exclusive_cpu, 5);
         assert_ne!(original, copy);
     }
+}
+
+
+#[derive(clap::ValueEnum, Clone, Debug, PartialEq)]
+pub enum Metric {
+    Cpu,
+    Memory,
+    Hostcalls,
 }

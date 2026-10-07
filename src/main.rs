@@ -26,6 +26,7 @@ use clap::Parser;
 use soroban_cost_profiler::aggregator::ProfileAggregator;
 use soroban_cost_profiler::formatter::OutputFormatter;
 use soroban_cost_profiler::source_map::SourceMapper;
+use soroban_cost_profiler::models::Metric;
 use soroban_cost_profiler::tracer::{
     ExecutionTracer, ProfilerState, instantiate_module, invoke_function, load_wasm_file,
     parse_module, setup_engine, setup_mock_env,
@@ -53,6 +54,10 @@ pub struct Cli {
     /// Sampling rate
     #[arg(long, default_value_t = 1000)]
     pub sample_rate: u32,
+
+    /// Cost metric to aggregate
+    #[arg(long, value_enum, default_value_t = Metric::Cpu)]
+    pub metric: Metric,
 }
 
 /// Stage 1: build a tracer carrying the MVP sampling and instruction-ceiling defaults.
@@ -154,7 +159,7 @@ fn profile(cli: &Cli) {
     let call_tree = aggregator.aggregate(events, &mapper);
 
     // 4. Format and output
-    let output = OutputFormatter::to_collapsed_stack(&call_tree);
+    let output = OutputFormatter::to_collapsed_stack(&call_tree, &cli.metric);
 
     if let Err(e) = std::fs::write(&cli.output, output) {
         tracing::error!(
@@ -194,6 +199,7 @@ mod tests {
             ),
             output: output_path.clone(),
             r#fn: String::from("caller_of_heavy"),
+            metric: Metric::Cpu,
             sample_rate: 1000,
         };
         profile(&cli);

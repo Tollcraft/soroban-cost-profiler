@@ -1,4 +1,4 @@
-use crate::models::CallStackNode;
+use crate::models::{CallStackNode, Metric};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 
@@ -23,15 +23,15 @@ pub enum DeltaScale {
 
 impl OutputFormatter {
     /// Formats the tree into a collapsed stack efficiently.
-    pub fn to_collapsed_stack(root: &CallStackNode) -> String {
+    pub fn to_collapsed_stack(root: &CallStackNode, metric: &Metric) -> String {
         let mut output = String::with_capacity(1024); // Pre-allocate to optimize memory allocations
         let mut current_path = String::new();
-        Self::format_node(root, &mut current_path, &mut output);
+        Self::format_node(root, metric, &mut current_path, &mut output);
         output
     }
 
     /// Recursively walks the tree, avoiding unnecessary clones by using mutable string references.
-    fn format_node(node: &CallStackNode, current_path: &mut String, output: &mut String) {
+    fn format_node(node: &CallStackNode, metric: &Metric, current_path: &mut String, output: &mut String) {
         let original_len = current_path.len();
 
         if !current_path.is_empty() {
@@ -40,10 +40,15 @@ impl OutputFormatter {
         current_path.push_str(&node.frame.function_name);
 
         // Folded format: `<path> <cost>`
-        let _ = writeln!(output, "{} {}", current_path, node.exclusive_cpu);
+        let cost = match metric {
+            Metric::Cpu => node.exclusive_cpu,
+            Metric::Memory => node.exclusive_mem,
+            Metric::Hostcalls => node.exclusive_hostcalls,
+        };
+        let _ = writeln!(output, "{} {}", current_path, cost);
 
         for child in node.children.values() {
-            Self::format_node(child, current_path, output);
+            Self::format_node(child, metric, current_path, output);
         }
 
         // Backtrack efficiently by truncating to the original length
@@ -156,6 +161,8 @@ mod tests {
                     .sum::<u64>(),
             exclusive_mem: 0,
             inclusive_mem: 0,
+            exclusive_hostcalls: 0,
+            inclusive_hostcalls: 0,
             children: children
                 .into_iter()
                 .map(|child| (child.frame.function_name.clone(), child))
@@ -172,7 +179,7 @@ mod tests {
 
     #[test]
     fn root_without_children_emits_one_line() {
-        let output = OutputFormatter::to_collapsed_stack(&leaf("main", 42));
+        let output = OutputFormatter::to_collapsed_stack(&leaf("main", 42), &Metric::Cpu);
 
         assert_eq!(lines(&output), vec!["main 42"]);
     }
@@ -181,7 +188,7 @@ mod tests {
     fn path_is_semicolon_delimited_per_depth() {
         let tree = node("a", 1, vec![node("b", 2, vec![leaf("c", 3)])]);
 
-        let output = OutputFormatter::to_collapsed_stack(&tree);
+        let output = OutputFormatter::to_collapsed_stack(&tree, &Metric::Cpu);
 
         assert_eq!(lines(&output), vec!["a 1", "a;b 2", "a;b;c 3"]);
     }
@@ -194,7 +201,7 @@ mod tests {
             vec![leaf("alpha", 10), leaf("beta", 20), leaf("gamma", 30)],
         );
 
-        let output = OutputFormatter::to_collapsed_stack(&tree);
+        let output = OutputFormatter::to_collapsed_stack(&tree, &Metric::Cpu);
 
         assert_eq!(output.lines().count(), 4);
         assert_eq!(
@@ -216,7 +223,7 @@ mod tests {
             ],
         );
 
-        let output = OutputFormatter::to_collapsed_stack(&tree);
+        let output = OutputFormatter::to_collapsed_stack(&tree, &Metric::Cpu);
 
         assert_eq!(
             lines(&output),
@@ -228,7 +235,7 @@ mod tests {
     fn exclusive_cost_is_reported_not_inclusive() {
         let tree = node("main", 5, vec![leaf("callee", 95)]);
 
-        let output = OutputFormatter::to_collapsed_stack(&tree);
+        let output = OutputFormatter::to_collapsed_stack(&tree, &Metric::Cpu);
 
         assert!(output.contains("main 5\n"), "got: {output:?}");
         assert!(!output.contains("main 100"));
@@ -240,7 +247,7 @@ mod tests {
         // in the output to keep its call path intact.
         let tree = node("main", 0, vec![leaf("callee", 0)]);
 
-        let output = OutputFormatter::to_collapsed_stack(&tree);
+        let output = OutputFormatter::to_collapsed_stack(&tree, &Metric::Cpu);
 
         assert_eq!(lines(&output), vec!["main 0", "main;callee 0"]);
     }
@@ -249,7 +256,7 @@ mod tests {
     fn output_ends_with_a_single_trailing_newline() {
         let tree = node("main", 1, vec![leaf("callee", 2)]);
 
-        let output = OutputFormatter::to_collapsed_stack(&tree);
+        let output = OutputFormatter::to_collapsed_stack(&tree, &Metric::Cpu);
 
         assert!(output.ends_with('\n'));
         assert!(!output.ends_with("\n\n"));
@@ -341,12 +348,12 @@ mod tests {
             "main",
             10,
             vec![leaf("compute_heavy_loop", 400)],
-        ));
+        ), &Metric::Cpu);
         let current = OutputFormatter::to_collapsed_stack(&node(
             "main",
             10,
             vec![leaf("compute_heavy_loop", 900)],
-        ));
+        ), &Metric::Cpu);
 
         let output = OutputFormatter::to_differential_folded(&baseline, &current).unwrap();
         let regression = output
