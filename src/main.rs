@@ -94,13 +94,14 @@ fn profile(cli: &Cli) {
     let tracer = initialize_tracer();
 
     let engine = wasmi::Engine::default();
-    let wasm_bytes = &[];
+    let wasm_bytes = std::fs::read(&cli.wasm).unwrap_or_else(|e| {
+        tracing::error!("Failed to read WASM file {}: {}", cli.wasm.display(), e);
+        std::process::exit(1);
+    });
 
-    // Fallback to empty module if parsing fails (dummy mode)
-    let module = wasmi::Module::new(&engine, wasm_bytes).unwrap_or_else(|_| {
-        // In dummy mode, this empty module will fail to instantiate because it lacks "main",
-        // but it proves the types and logic are sound.
-        wasmi::Module::new(&engine, r#"(module (func (export "main")))"#).unwrap()
+    let module = wasmi::Module::new(&engine, &wasm_bytes[..]).unwrap_or_else(|e| {
+        tracing::error!("Failed to parse WASM module: {}", e);
+        std::process::exit(1);
     });
 
     let mut store = wasmi::Store::new(
