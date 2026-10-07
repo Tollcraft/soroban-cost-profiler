@@ -27,6 +27,29 @@ use soroban_cost_profiler::formatter::OutputFormatter;
 use soroban_cost_profiler::source_map::SourceMapper;
 use soroban_cost_profiler::tracer::ExecutionTracer;
 use tracing::warn;
+use clap::Parser;
+use std::path::PathBuf;
+
+/// Soroban Cost Profiler
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+pub struct Cli {
+    /// Path to the compiled WASM contract
+    #[arg(short, long)]
+    pub wasm: PathBuf,
+
+    /// Output file path for the .folded stacks
+    #[arg(short, long, default_value = "profile.folded")]
+    pub output: PathBuf,
+
+    /// Target function to invoke
+    #[arg(long, default_value = "")]
+    pub fn_name: String,
+
+    /// Sampling rate
+    #[arg(long, default_value_t = 1000)]
+    pub sample_rate: u32,
+}
 
 /// Stage 1: build a tracer carrying the MVP sampling and instruction-ceiling defaults.
 ///
