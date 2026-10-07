@@ -105,6 +105,8 @@ fn profile() -> String {
 
 /// Print the MVP notice and run the harness.
 fn main() {
+    let _cli = Cli::parse();
+    let _cli = Cli::parse();
     println!("soroban-cost-profiler MVP (Not yet implemented)");
     profile();
 }
