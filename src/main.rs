@@ -36,8 +36,19 @@ use tracing::warn;
 use wasmi::Val;
 
 /// Soroban Cost Profiler
+
+fn parse_positive_u32(s: &str) -> Result<u32, String> {
+    let val: u32 = s.parse().map_err(|_| format!("`{}` is not a valid number", s))?;
+    if val == 0 {
+        Err(String::from("must be greater than 0"))
+    } else {
+        Ok(val)
+    }
+}
+
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
+
 pub struct Cli {
     /// Path to the compiled WASM contract
     #[arg(short, long)]
@@ -52,7 +63,7 @@ pub struct Cli {
     pub r#fn: String,
 
     /// Sampling rate
-    #[arg(long, default_value_t = 1000)]
+    #[arg(long, default_value_t = 1000, value_parser = parse_positive_u32)]
     pub sample_rate: u32,
 
     /// Cost metric to aggregate
