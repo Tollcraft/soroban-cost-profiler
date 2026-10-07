@@ -113,14 +113,24 @@ fn profile(cli: &Cli) {
         },
     );
 
-    if let Ok(instance) = instantiate_module(&engine, &mut store, &module) {
-        let mut results = vec![wasmi::Val::I32(0); 1];
-        match invoke_function(&mut store, &instance, "main", &[], &mut results) {
-            Ok(_) => tracing::info!("WASM execution completed successfully."),
-            Err(e) => tracing::error!(
-                "WASM execution trapped/panicked: {}. Flushing partial trace.",
-                e
-            ),
+    match instantiate_module(&engine, &mut store, &module) {
+        Ok(instance) => {
+            let func_name = if cli.fn_name.is_empty() {
+                "test"
+            } else {
+                &cli.fn_name
+            };
+            let mut results = vec![wasmi::Val::I32(0); 1];
+            match invoke_function(&mut store, &instance, func_name, &[], &mut results) {
+                Ok(_) => tracing::info!("WASM execution completed successfully."),
+                Err(e) => tracing::error!(
+                    "WASM execution trapped/panicked: {}. Flushing partial trace.",
+                    e
+                ),
+            }
+        }
+        Err(e) => {
+            tracing::error!("Failed to instantiate module: {}", e);
         }
     }
 
