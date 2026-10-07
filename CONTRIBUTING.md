@@ -3,7 +3,9 @@
 Thank you for contributing to the Tollcraft ecosystem! This file is the workflow: what to install, what has
 to pass before you push, and what a pull request here has to contain. The product requirements are in
 `PRD.md`, the design in `ARCHITECTURE.md` (start with the 60-second version, `ARCHITECTURE_ESSENTIALS.md`),
-and the state of the project in `ROADMAP.md`.
+and the state of the project in `ROADMAP.md`. The two user-facing documents are `docs/tutorial.md` (a contract,
+a profile, a flamegraph, in eight steps) and `docs/troubleshooting.md` (every message the tool writes, one
+symptom at a time) — a PR that changes what either of them shows has to update the other.
 
 ## ⚠️ Important: The Roadmap Rule
 
