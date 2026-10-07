@@ -244,9 +244,9 @@ $ echo $?
 ```
 
 This is the repository's own `soroban-sdk` fixture — `fixtures/build.sh` builds it, about 622 KB, and the path
-above is relative to `fixtures/dummy-contract`, where that script leaves it. Its export list is not the one a
-reader expects from their own `#[contractimpl]` names. Take a function that really is there, and you meet the
-wall:
+above is relative to the repository root, because that contract is a member of this workspace and the artifact
+lands in the root's `target/`. Its export list is not the one a reader expects from their own
+`#[contractimpl]` names. Take a function that really is there, and you meet the wall:
 
 ```console
 $ soroban-cost-profiler --wasm target/wasm32-unknown-unknown/release/dummy_contract.wasm --fn compute_heavy_loop --output dummy.folded
