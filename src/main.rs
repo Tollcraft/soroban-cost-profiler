@@ -44,8 +44,8 @@ pub struct Cli {
 
     /// Target function to invoke
 
-    #[arg(long = "fn", default_value = "")]
-    pub fn_name: String,
+    #[arg(long, default_value = "")]
+    pub r#fn: String,
 
     /// Sampling rate
     #[arg(long, default_value_t = 1000)]
