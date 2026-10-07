@@ -48,8 +48,8 @@ pub struct Cli {
     pub output: PathBuf,
 
     /// Target function to invoke
-    #[arg(long, default_value = "")]
-    pub r#fn: String,
+    #[arg(long = "fn", default_value = "")]
+    pub fn_name: String,
 
     /// Sampling rate
     #[arg(long, default_value_t = 1000)]
@@ -131,10 +131,10 @@ fn profile(cli: &Cli) {
         }
     };
 
-    let func_name = if cli.r#fn.is_empty() {
+    let func_name = if cli.fn_name.is_empty() {
         "test"
     } else {
-        &cli.r#fn
+        &cli.fn_name
     };
 
     let func = instance.get_func(&store, func_name).unwrap_or_else(|| {
@@ -178,7 +178,7 @@ fn profile(cli: &Cli) {
 /// Print the MVP notice and run the harness.
 fn main() {
     let cli = Cli::parse();
-    tracing::error!("soroban-cost-profiler MVP (Not yet implemented)");
+    println!("soroban-cost-profiler MVP (Not yet implemented)");
     profile(&cli);
 }
 
@@ -198,7 +198,7 @@ mod tests {
                 "fixtures/dwarf_probe/dwarf_probe.wasm",
             ),
             output: output_path.clone(),
-            r#fn: String::from("caller_of_heavy"),
+            fn_name: String::from("caller_of_heavy"),
             metric: Metric::Cpu,
             sample_rate: 1000,
         };
