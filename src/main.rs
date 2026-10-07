@@ -172,6 +172,8 @@ fn profile(cli: &Cli) {
             cli.output.display()
         );
     }
+
+    OutputFormatter::print_top_functions(&call_tree, &cli.metric, 10);
 }
 
 /// Print the MVP notice and run the harness.

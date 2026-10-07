@@ -33,6 +33,16 @@ impl OutputFormatter {
         ranked
     }
 
+    /// Prints the top functions with colorized ANSI escape codes.
+    pub fn print_top_functions(root: &CallStackNode, metric: &Metric, n: usize) {
+        let top = Self::top_functions(root, metric, n);
+        println!("\n\x1b[1;32mTop {} Hottest Functions\x1b[0m", top.len());
+        println!("\x1b[1;32m========================\x1b[0m");
+        for (name, cost) in top {
+            println!("\x1b[1;36m{}\x1b[0m: \x1b[1;33m{}\x1b[0m", name, cost);
+        }
+    }
+
     fn traverse_costs(
         node: &CallStackNode,
         metric: &Metric,
