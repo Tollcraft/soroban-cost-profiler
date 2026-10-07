@@ -26,9 +26,13 @@ use clap::Parser;
 use soroban_cost_profiler::aggregator::ProfileAggregator;
 use soroban_cost_profiler::formatter::OutputFormatter;
 use soroban_cost_profiler::source_map::SourceMapper;
-use soroban_cost_profiler::tracer::ExecutionTracer;
+use soroban_cost_profiler::tracer::{
+    ExecutionTracer, ProfilerState, instantiate_module, invoke_function, load_wasm_file,
+    parse_module, setup_engine, setup_mock_env,
+};
 use std::path::PathBuf;
 use tracing::warn;
+use wasmi::Val;
 
 /// Soroban Cost Profiler
 #[derive(Parser, Debug)]
@@ -43,9 +47,8 @@ pub struct Cli {
     pub output: PathBuf,
 
     /// Target function to invoke
-
-    #[arg(long = "fn", default_value = "")]
-    pub fn_name: String,
+    #[arg(long, default_value = "")]
+    pub r#fn: String,
 
     /// Sampling rate
     #[arg(long, default_value_t = 1000)]
@@ -56,8 +59,8 @@ pub struct Cli {
 ///
 /// The engine hooks that feed it are installed by `tracer::invoke_function`, which needs a
 /// `Store<ProfilerState>` rather than a bare tracer — that wiring lands with Phase 2's CLI.
-fn initialize_tracer() -> ExecutionTracer {
-    ExecutionTracer::new()
+fn initialize_tracer(cli: &Cli) -> ExecutionTracer {
+    ExecutionTracer::new().with_sample_rate(cli.sample_rate as u64)
 }
 
 /// Stage 2: build the source mapper for the target WASM binary.
@@ -69,8 +72,8 @@ fn initialize_tracer() -> ExecutionTracer {
 ///
 /// Empty bytes are the placeholder until Phase 5 reads the binary from disk (`load_wasm_file`),
 /// so this logs `NotWasm` and continues with an unmapped mapper.
-fn load_source_mapper() -> SourceMapper {
-    SourceMapper::new(&[]).unwrap_or_else(|error| {
+fn load_source_mapper(wasm_bytes: &[u8]) -> SourceMapper {
+    SourceMapper::new(wasm_bytes).unwrap_or_else(|error| {
         warn!("cannot symbolize frames: {error}");
         SourceMapper::unmapped()
     })
@@ -88,12 +91,63 @@ fn initialize_aggregator() -> ProfileAggregator {
 /// (`--wasm`, `--output`) is Phase 5, which replaces the empty trace with a real run and writes
 /// this return value to disk.
 fn profile(cli: &Cli) {
-    // 1. Initialize tracer and execute WASM
-    let mut tracer = initialize_tracer();
-    let events = tracer.flush_trace();
+    let wasm_bytes = match load_wasm_file(cli.wasm.to_str().unwrap_or_default()) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            tracing::error!("Failed to load WASM file: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    let engine = setup_engine();
+    let module = match parse_module(&engine, &wasm_bytes) {
+        Ok(m) => m,
+        Err(e) => {
+            tracing::error!("Failed to parse WASM module: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    let tracer = initialize_tracer(cli);
+    let state = ProfilerState {
+        tracer,
+        host: setup_mock_env(),
+        last_fuel: 0,
+    };
+
+    let mut store = wasmi::Store::new(&engine, state);
+    store.set_fuel(u64::MAX).unwrap();
+
+    let instance = match instantiate_module(&engine, &mut store, &module) {
+        Ok(inst) => inst,
+        Err(e) => {
+            tracing::error!("Failed to instantiate module: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    let func_name = if cli.r#fn.is_empty() {
+        "test"
+    } else {
+        &cli.r#fn
+    };
+
+    let func = instance.get_func(&store, func_name).unwrap_or_else(|| {
+        tracing::error!("Function '{}' not found in module", func_name);
+        std::process::exit(1);
+    });
+
+    let ty = func.ty(&store);
+    let mut results = vec![Val::I32(0); ty.results().len()];
+
+    if let Err(e) = invoke_function(&mut store, &instance, func_name, &[], &mut results) {
+        tracing::error!("Execution failed: {}", e);
+    }
+
+    let events = store.data_mut().tracer.flush_trace();
 
     // 2. Load DWARF source map
-    let mapper = load_source_mapper();
+    let mapper = load_source_mapper(&wasm_bytes);
 
     // 3. Aggregate events into call tree
     let mut aggregator = initialize_aggregator();
@@ -119,7 +173,7 @@ fn profile(cli: &Cli) {
 /// Print the MVP notice and run the harness.
 fn main() {
     let cli = Cli::parse();
-    println!("soroban-cost-profiler MVP (Not yet implemented)");
+    tracing::error!("soroban-cost-profiler MVP (Not yet implemented)");
     profile(&cli);
 }
 
@@ -135,9 +189,11 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let output_path = temp_dir.path().join("profile.folded");
         let cli = Cli {
-            wasm: PathBuf::new(),
+            wasm: PathBuf::from(
+                "fixtures/dwarf_probe/dwarf_probe.wasm",
+            ),
             output: output_path.clone(),
-            fn_name: String::new(),
+            r#fn: String::from("caller_of_heavy"),
             sample_rate: 1000,
         };
         profile(&cli);
@@ -145,10 +201,8 @@ mod tests {
         let collapsed = std::fs::read_to_string(&output_path).unwrap();
         let stacks = OutputFormatter::parse_folded(&collapsed)
             .expect("the pipeline's own output must be valid folded stacks");
-        assert_eq!(
-            stacks.values().sum::<u64>(),
-            0,
-            "no WASM ran, so nothing was costed"
-        );
+
+        // At least we expect some valid output for the run
+        assert!(!stacks.is_empty(), "WASM ran, so something was costed");
     }
 }

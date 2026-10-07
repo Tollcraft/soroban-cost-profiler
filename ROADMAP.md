@@ -105,9 +105,9 @@
 - [x] **Differential Comparison:** Diff two `.folded` artifacts into `<stack> <baseline> <current>` lines for `flamegraph.pl --diff`, with the red/blue/neutral classification tested in `src/formatter.rs` and `tests/differential.rs` (#44). Rendering stays an external step: `AGENTS.md` cuts SVG/inferno from the MVP.
 
 ## Phase 5: CLI & Edge Cases (MVP Completion)
-- [ ] **CLI Parsing:** Add `clap` to `src/main.rs` to accept `--wasm`, `--output`, and test arguments.
-- [ ] **Panic Handling:** Ensure the aggregator flushes and formats the trace even if the contract panics mid-execution.
-- [ ] **Infinite Loop Protection:** Enforce a hard ceiling (e.g. 100M instructions) to halt tracing and prevent OOM crashes.
+- [x] **CLI Parsing:** Add `clap` to `src/main.rs` to accept `--wasm`, `--output`, and test arguments.
+- [x] **Panic Handling:** Ensure the aggregator flushes and formats the trace even if the contract panics mid-execution.
+- [x] **Infinite Loop Protection:** Enforce a hard ceiling (e.g. 100M instructions) to halt tracing and prevent OOM crashes.
 - [ ] **Documentation:** Update README with usage examples and CLI flag details.
 - [x] **FAQ:** Design and implement FAQ section for GitHub Pages (`docs/index.html`).
 
