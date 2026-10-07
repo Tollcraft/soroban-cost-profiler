@@ -12,6 +12,9 @@ ed25519-dalek = { path = "vendor/ed25519-dalek-2.1.1" }
 name = "soroban-cost-profiler"
 version = "0.1.0"
 edition = "2024"
+description = "A cost profiler for Soroban smart contracts"
+repository = "https://github.com/Tollcraft/soroban-cost-profiler"
+license = "Apache-2.0"
 
 [dependencies]
 soroban-env-host = "28.0.2"
