@@ -351,7 +351,9 @@ pub fn invoke_function(
         }
         // `wasmi` 2.0.0 has no instruction hook, so a single unit-costed step stands in
         // for the instructions run since the last boundary.
-        let _ = state.tracer.record_step(0, 1, 0);
+        if let Err(e) = state.tracer.record_step(0, 1, 0) {
+            return Err(wasmi::Error::new(e.to_string()));
+        }
         Ok(())
     });
 
