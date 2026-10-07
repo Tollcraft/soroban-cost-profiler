@@ -64,35 +64,39 @@ fn initialize_aggregator() -> ProfileAggregator {
 /// (`--wasm`, `--output`) is Phase 5, which replaces the empty trace with a real run and writes
 /// this return value to disk.
 fn profile() -> String {
-    use soroban_cost_profiler::tracer::{instantiate_module, invoke_function, ProfilerState};
+    use soroban_cost_profiler::tracer::{ProfilerState, instantiate_module, invoke_function};
     use soroban_env_host::Host;
 
     // 1. Initialize tracer and execute WASM
     let tracer = initialize_tracer();
-    
+
     let engine = wasmi::Engine::default();
     let wasm_bytes = &[];
-    
+
     // Fallback to empty module if parsing fails (dummy mode)
     let module = wasmi::Module::new(&engine, wasm_bytes).unwrap_or_else(|_| {
         // In dummy mode, this empty module will fail to instantiate because it lacks "main",
         // but it proves the types and logic are sound.
-        wasmi::Module::new(&engine,
-            r#"(module (func (export "main")))"#
-        ).unwrap()
+        wasmi::Module::new(&engine, r#"(module (func (export "main")))"#).unwrap()
     });
 
-    let mut store = wasmi::Store::new(&engine, ProfilerState {
-        tracer,
-        host: Host::default(),
-        last_fuel: 0,
-    });
+    let mut store = wasmi::Store::new(
+        &engine,
+        ProfilerState {
+            tracer,
+            host: Host::default(),
+            last_fuel: 0,
+        },
+    );
 
     if let Ok(instance) = instantiate_module(&engine, &mut store, &module) {
         let mut results = vec![wasmi::Val::I32(0); 1];
         match invoke_function(&mut store, &instance, "main", &[], &mut results) {
             Ok(_) => tracing::info!("WASM execution completed successfully."),
-            Err(e) => tracing::error!("WASM execution trapped/panicked: {}. Flushing partial trace.", e),
+            Err(e) => tracing::error!(
+                "WASM execution trapped/panicked: {}. Flushing partial trace.",
+                e
+            ),
         }
     }
 
