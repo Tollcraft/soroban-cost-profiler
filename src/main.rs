@@ -26,14 +26,13 @@ use clap::Parser;
 use soroban_cost_profiler::aggregator::ProfileAggregator;
 use soroban_cost_profiler::formatter::OutputFormatter;
 use soroban_cost_profiler::models::{Metric, TraceEvent};
-use soroban_cost_profiler::source_map::SourceMapper;
+use soroban_cost_profiler::source_map::{SourceMapError, SourceMapper};
 use soroban_cost_profiler::tracer::{
     ExecutionTracer, ProfilerState, instantiate_module, invoke_function, load_wasm_file,
     parse_module, setup_engine, setup_mock_env,
 };
 use std::io::IsTerminal;
 use std::path::PathBuf;
-use tracing::warn;
 use wasmi::{ExternType, Val};
 
 /// `value_parser` for `--sample-rate`: accept a positive count, refuse everything else.
@@ -93,17 +92,67 @@ fn initialize_tracer(cli: &Cli) -> ExecutionTracer {
     ExecutionTracer::new().with_sample_rate(cli.sample_rate as u64)
 }
 
-/// Stage 2: build the source mapper for the target WASM binary.
+/// Print a degraded-profile warning where the user will actually read it (#186).
 ///
-/// Loading is fallible now that the stage reads DWARF, and the failure is not fatal: a binary
-/// without symbols still profiles, it just names frames `wasm[pc]`. The error is logged because
-/// it tells the user which build flag to set — a flamegraph of unnamed frames is otherwise
-/// indistinguishable from a profiler that is not working.
+/// stderr, for two reasons that both bite here: stdout carries the ranked summary that callers pipe
+/// into other tools, and nothing in this crate installs a `tracing` subscriber — so the
+/// `tracing::warn!` this stage used to write its warning with produced no output at all, which is
+/// how a profiler running on a stripped binary could claim to have warned the user about it.
+fn warn_user(message: &str) {
+    eprintln!("warning: {message}");
+}
+
+/// What to tell the user about a binary this stage could not name at all (#186).
+///
+/// The error already carries the diagnosis — [`SourceMapError::MissingDebugInfo`]'s `Display` names
+/// the build flag and lists the sections that *were* present — so this only adds the consequence
+/// the user is about to see in the file, because "no `.debug_info` section" does not obviously mean
+/// "every frame in your flamegraph is an address".
+fn unmapped_warning(error: &SourceMapError) -> String {
+    format!(
+        "{error} Every frame will therefore be named by address, `wasm[pc]`, and not by source."
+    )
+}
+
+/// The warnings a loaded mapper's own state calls for, in the order the user should read them.
+///
+/// Computed separately from printing so a test can assert what a given binary earns. Two of the
+/// three degradations are distinguishable only from outside — DWARF and the `name` section fail
+/// independently and need different sentences — and the third is the mapper's own measurement,
+/// already phrased, arriving through [`SourceMapper::warning`].
+fn symbolization_warnings(mapper: &SourceMapper) -> Vec<String> {
+    let mut warnings = Vec::new();
+    if !mapper.has_debug_info() && mapper.names_functions() {
+        warnings.push(String::from(
+            "this artifact has a `name` section but no DWARF line tables, so frames will name \
+             functions and never `file:line`. Build the copy you profile with a profiling profile \
+             — `[profile.profiling]` with `inherits = \"release\"` and `debug = \
+             \"line-tables-only\"` — and keep `debug` out of `[profile.release]`: that is the \
+             profile whose output gets deployed, and mainnet bills for the extra bytes.",
+        ));
+    }
+    warnings.extend(mapper.warning().map(String::from));
+    warnings
+}
+
+/// Stage 2: build the source mapper for the target WASM binary, and say out loud what it cannot name.
+///
+/// Loading is fallible, and the failure is not fatal: a binary without symbols still profiles, it
+/// just names frames by address. What #186 adds is that the *degradation* has to be reported, not
+/// merely survived — a flamegraph of unnamed frames is otherwise indistinguishable from a profiler
+/// that is not working, and the three ways a binary is unnamed are three different fixes.
 fn load_source_mapper(wasm_bytes: &[u8]) -> SourceMapper {
-    SourceMapper::new(wasm_bytes).unwrap_or_else(|error| {
-        warn!("cannot symbolize frames: {error}");
-        SourceMapper::unmapped()
-    })
+    let mapper = match SourceMapper::new(wasm_bytes) {
+        Ok(mapper) => mapper,
+        Err(error) => {
+            warn_user(&unmapped_warning(&error));
+            return SourceMapper::unmapped();
+        }
+    };
+    for warning in symbolization_warnings(&mapper) {
+        warn_user(&warning);
+    }
+    mapper
 }
 
 /// Stage 3: build an empty aggregator.
@@ -382,6 +431,12 @@ mod tests {
     use soroban_cost_profiler::models::EventType;
 
     const FIXTURE: &[u8] = include_bytes!("../fixtures/dwarf_probe/dwarf_probe.wasm");
+
+    /// The same three contract functions built with `debug = false`: a `name` section, no line
+    /// tables. #186's middle case, and the one that has to be told apart from a fully stripped
+    /// binary because the user's fix differs.
+    const NO_DEBUG_PROBE: &[u8] =
+        include_bytes!("../fixtures/dwarf_probe/dwarf_probe_no_debug.wasm");
 
     /// `caller_of_heavy` is `compute_heavy_loop() + memory_heavy_loop()`: the first sums
     /// `3 * i` for `i < 1000`, the second sums `7 * i` for `i < 64`.
@@ -706,5 +761,95 @@ mod tests {
             !output_path.exists(),
             "a run that never started must not leave a profile behind"
         );
+    }
+
+    /// Load a mapper the tests expect to succeed. `unwrap`/`expect` would need `SourceMapper: Debug`,
+    /// and the type holds a `gimli` parse context that has no useful debug format.
+    fn loaded_mapper(bytes: &[u8]) -> SourceMapper {
+        SourceMapper::new(bytes)
+            .unwrap_or_else(|error| panic!("expected this binary to load: {error}"))
+    }
+
+    /// #186's "done": a stripped binary triggers a profile warning. The binary this crate can
+    /// neither name nor line is the one case where surviving the error silently was indistinguishable
+    /// from working, so the message has to name both the consequence and the fix.
+    #[test]
+    fn a_binary_with_no_symbols_at_all_warns_that_frames_will_be_addresses() {
+        let error = SourceMapper::new(BOOM)
+            .err()
+            .expect("a hand-assembled module carries neither DWARF nor a `name` section");
+        let warning = unmapped_warning(&error);
+        assert!(
+            warning.contains("wasm[pc]") && warning.contains("line-tables-only"),
+            "the warning must say what the user will see and how to stop it: {warning}"
+        );
+    }
+
+    /// The middle case #186 exists for: #157's fallback loads happily and resolves *something*, so
+    /// no error fires and the old code said nothing at all — while the flamegraph the user gets
+    /// names functions and never a line. A run that works less than the user asked for is not a run
+    /// with nothing to report.
+    #[test]
+    fn a_name_section_only_binary_warns_about_missing_lines() {
+        let mapper = loaded_mapper(NO_DEBUG_PROBE);
+        assert!(mapper.names_functions() && !mapper.has_debug_info());
+        let warnings = symbolization_warnings(&mapper);
+        assert_eq!(
+            warnings.len(),
+            1,
+            "one degradation, one warning: {warnings:?}"
+        );
+        assert!(
+            warnings[0].contains("file:line"),
+            "the warning must name what is missing: {}",
+            warnings[0]
+        );
+    }
+
+    /// The other direction: a properly built artifact earns no warning, which is what makes the
+    /// other two tests mean anything. This also pins that #162's degenerate-mapping ratio does not
+    /// fire on the committed fixture, so the warning this PR adds cannot become background noise.
+    #[test]
+    fn a_fully_symbolized_binary_earns_no_warning() {
+        let mapper = loaded_mapper(FIXTURE);
+        assert!(
+            mapper.has_debug_info(),
+            "the fixture is the symbolized case"
+        );
+        assert!(
+            symbolization_warnings(&mapper).is_empty(),
+            "a properly built artifact must stay quiet"
+        );
+    }
+
+    /// The fallback mapper is what a run continues with *after* the error above was printed, so
+    /// warnings computed from its state must not repeat that message. Two sentences saying one
+    /// thing is how users start ignoring all of them.
+    #[test]
+    fn the_unnamed_fallback_adds_no_second_warning() {
+        assert!(
+            symbolization_warnings(&SourceMapper::unmapped()).is_empty(),
+            "the already-stripped case is reported by `unmapped_warning`, not twice"
+        );
+    }
+
+    /// Neither message may tell the user to put debug info in the profile whose output gets
+    /// deployed. `SourceMapError`'s own text used to read `[profile.release] debug =
+    /// "line-tables-only"`, which the README marks as a deployment-cost hazard, and a warning is
+    /// instructions — so this is asserted, not stylistic.
+    #[test]
+    fn no_warning_asks_for_debug_info_in_the_deployed_profile() {
+        let stripped = unmapped_warning(
+            &SourceMapper::new(BOOM)
+                .err()
+                .expect("a hand-assembled module carries neither DWARF nor a `name` section"),
+        );
+        let name_only = symbolization_warnings(&loaded_mapper(NO_DEBUG_PROBE)).join(" ");
+        for message in [&stripped, &name_only] {
+            assert!(
+                !message.contains("[profile.release] debug"),
+                "the advice must name a profiling profile, never the release one: {message}"
+            );
+        }
     }
 }

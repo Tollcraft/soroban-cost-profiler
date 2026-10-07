@@ -63,10 +63,12 @@ impl std::fmt::Display for SourceMapError {
                 write!(
                     f,
                     "no `.debug_info` section, so program counters cannot be mapped to Rust \
-                     source lines. Build the contract with debug info enabled — \
-                     `[profile.release] debug = \"line-tables-only\"` is enough for `file:line` \
-                     frames — and profile that artifact rather than the stripped one \
-                     (`wasm-opt`, and `stellar contract build`, strip debug info)."
+                     source lines. Build the copy you profile with a profiling profile — \
+                     `[profile.profiling]` with `inherits = \"release\"` and \
+                     `debug = \"line-tables-only\"` is enough for `file:line` frames — and profile \
+                     that artifact rather than the stripped one (`wasm-opt`, and `stellar contract \
+                     build`, strip debug info). Keep `debug` out of `[profile.release]`: that is \
+                     the profile whose output gets deployed, and mainnet bills for the extra bytes."
                 )?;
                 if custom_sections.is_empty() {
                     write!(f, " The module carries no custom sections at all.")?;
@@ -207,6 +209,13 @@ pub struct SourceMapper {
     /// [`SourceMapper::new`] report [`SourceMapError::MissingDebugInfo`] rather than load a binary
     /// that can say nothing about itself.
     names: Option<NameSection>,
+    /// A degradation this mapper detected about itself and the user has to be told about (#186).
+    ///
+    /// Detection lives here because the ratio that produces it is this stage's own measurement;
+    /// *delivery* cannot, because nothing in this crate installs a `tracing` subscriber, so a
+    /// `tracing::warn!` written here reaches no terminal. The CLI reads this field and prints it to
+    /// stderr beside the fatal messages, which is the one channel this binary has.
+    warning: Option<String>,
     /// Addresses whose inline stack this mapper has already computed (#158).
     ///
     /// A trace revisits addresses: the tracer records one event per call boundary and per sample,
@@ -308,6 +317,10 @@ impl SourceMapper {
                 context: None,
                 code: sections.code,
                 names: Some(names),
+                // Degraded, but in the way #157 designed: names without lines. The CLI says so from
+                // `has_debug_info`, because the fix is a build flag and that is the CLI's register,
+                // not this stage's measurement.
+                warning: None,
                 cache: RefCell::new(HashMap::new()),
             });
         }
@@ -318,25 +331,27 @@ impl SourceMapper {
             }
         })?;
 
-        let mapper = Self {
+        let mut mapper = Self {
             context: Some(context),
             code: sections.code,
             names,
+            warning: None,
             cache: RefCell::new(HashMap::new()),
         };
-
-        mapper.check_degenerate_mappings();
+        mapper.warning = mapper.degenerate_warning();
         Ok(mapper)
     }
 
-    /// Computes the ratio of PCs mapping to duplicate or `None` lines and emits a warning if it is highly degenerate.
-    fn check_degenerate_mappings(&self) {
-        let Some(code_map) = self.code_map() else {
-            return;
-        };
-        let Some(context) = self.context.as_ref() else {
-            return;
-        };
+    /// The message for a mapper whose own line tables mostly fail to answer, or `None`.
+    ///
+    /// Samples every tenth address of every function body and counts the ones that resolve to
+    /// nothing or to a line some other address already claimed. Over 90% means the DWARF that did
+    /// load describes different code from the bytes that ran — the pre-inlining, pre-optimization
+    /// shape — which is #162's finding and the reason this is a warning rather than an error: the
+    /// run still profiles, the frames are just not to be trusted line by line.
+    fn degenerate_warning(&self) -> Option<String> {
+        let code_map = self.code_map()?;
+        let context = self.context.as_ref()?;
 
         let mut total_sampled = 0;
         let mut missing_or_duplicate = 0;
@@ -365,28 +380,34 @@ impl SourceMapper {
             }
         }
 
-        if total_sampled > 0 {
-            let degenerate_ratio = missing_or_duplicate as f64 / total_sampled as f64;
-            if degenerate_ratio > 0.90 {
-                tracing::warn!(
-                    "Heavily mangled or degenerate line mappings detected (ratio: {:.2}).                      Your DWARF info may describe pre-optimization code.",
-                    degenerate_ratio
-                );
-            }
+        if total_sampled == 0 {
+            return None;
         }
+        let degenerate_ratio = missing_or_duplicate as f64 / total_sampled as f64;
+        if degenerate_ratio <= 0.90 {
+            return None;
+        }
+        Some(format!(
+            "{:.0}% of the sampled addresses in this binary map to no line or to one another \
+             address already claimed, so its DWARF describes different code from the bytes that \
+             ran — typically pre-inlining, pre-optimization output. The frames below are not wrong \
+             about which functions ran, but read their line numbers with suspicion.",
+            degenerate_ratio * 100.0
+        ))
     }
 
     /// A mapper that resolves nothing, for a run that continues without symbols.
     ///
     /// This is the degraded-but-working path: Stages 3 and 4 still produce a tree, keyed by the
-    /// `wasm[pc]` / `host[pc]` names the tracer already has. `main`'s harness uses it because it
-    /// has no binary to read yet — Phase 5's CLI replaces it with [`SourceMapper::new`] plus the
-    /// warning the returned error carries.
+    /// `wasm[pc]` / `host[pc]` names the tracer already has. The CLI reaches it when
+    /// [`SourceMapper::new`] refuses a binary it cannot name at all, and prints that error as the
+    /// warning (#186) — the run continues, it is not silently unnamed.
     pub fn unmapped() -> Self {
         Self {
             context: None,
             code: None,
             names: None,
+            warning: None,
             cache: RefCell::new(HashMap::new()),
         }
     }
@@ -398,6 +419,25 @@ impl SourceMapper {
     /// user's missing build flag, which the CLI has to report.
     pub fn has_debug_info(&self) -> bool {
         self.context.is_some()
+    }
+
+    /// Whether this mapper can name functions at all, from DWARF or from the `name` section (#157).
+    ///
+    /// Beside [`has_debug_info`] this separates the two degradations a user can hit, which need
+    /// different sentences: a binary with a `name` section but no line tables produces frames that
+    /// name the right functions and nothing else, while one with neither produces frames named only
+    /// by address.
+    pub fn names_functions(&self) -> bool {
+        self.names.is_some()
+    }
+
+    /// What this mapper detected about its own quality, for the CLI to print (#186).
+    ///
+    /// `None` means "nothing to report", not "nothing is wrong" — the degradations that are a
+    /// missing build flag are visible from [`has_debug_info`] and [`names_functions`] instead, and
+    /// this one is only measurable after the DWARF loaded.
+    pub fn warning(&self) -> Option<&str> {
+        self.warning.as_deref()
     }
 
     /// Resolve one program counter to the inline stack that produced it, innermost frame first.
