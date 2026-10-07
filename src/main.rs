@@ -113,7 +113,7 @@ fn profile(cli: &Cli) {
         },
     );
 
-    match instantiate_module(&engine, &mut store, &module) {
+    let events = match instantiate_module(&engine, &mut store, &module) {
         Ok(instance) => {
             let func_name = if cli.fn_name.is_empty() {
                 "test"
@@ -128,13 +128,13 @@ fn profile(cli: &Cli) {
                     e
                 ),
             }
+            store.into_data().tracer.flush_trace()
         }
         Err(e) => {
             tracing::error!("Failed to instantiate module: {}", e);
+            store.into_data().tracer.flush_trace()
         }
-    }
-
-    let events = store.into_data().tracer.flush_trace();
+    };
 
     // 2. Load DWARF source map
     let mapper = load_source_mapper();
@@ -178,8 +178,10 @@ mod tests {
     fn assembling_the_stages_runs_to_completion() {
         let temp_dir = tempfile::tempdir().unwrap();
         let output_path = temp_dir.path().join("profile.folded");
+        let wasm_path = temp_dir.path().join("dummy.wasm");
+        std::fs::write(&wasm_path, b"\0asm\x01\x00\x00\x00").unwrap();
         let cli = Cli {
-            wasm: PathBuf::new(),
+            wasm: wasm_path,
             output: output_path.clone(),
             fn_name: String::new(),
             sample_rate: 1000,
