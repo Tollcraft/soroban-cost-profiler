@@ -120,6 +120,31 @@ So `SourceFrame`'s three fields have three different contracts, and this is deli
   name; a line table can still yield a file with no line. Never fold a missing line into `Some(0)` —
   line 0 is a real value in some DWARF, and `Option` is what distinguishes "absent" from "line zero".
 
+## Which line a statement gets (#160)
+
+A line table names the line that owns an instruction *after* optimization, which is not always the
+line a reader expects. Two functions in the same fixture, built the same way, behave differently:
+
+* `memory_heavy_loop` walks statement by statement — `20` is its signature (line `21`), `50` the
+  buffer (`22`), `72` and `117` the fill loop (`24`, `25`), `90` and `96` the sum loop (`30`, `31`),
+  `142` the closing brace (`35`).
+* `compute_heavy_loop` shows none of that. Its `while i < 1000` counted loop folds to a closed form
+  at `opt-level = "z"`, so `158`..=`163` all name line `10` — the `fn` signature — and `164` names
+  `18`, the brace. Nothing resolves to lines `13`..=`15`.
+
+Both are correct answers from the same build setting, and the difference is only what the optimizer
+left behind. Phase 5's sampling inherits that: on an optimized contract a hot loop can show up as
+its function's signature line, so "hottest line" is not "hottest statement" and the report should say
+so rather than imply source-level precision the artifacts do not carry.
+
+The check that holds this together is `tests/source_map_fixture.rs`: it reads the resolved line back
+out of the committed source and compares **text**, so a base one byte off or a line program stepped
+to the neighbouring row fails on the mismatch instead of passing with a plausible number. Its
+`#[ignore]`d case runs the same assertions against `fixtures/build.sh`'s 622 KB Soroban build — the
+only artifact with the real inlined-dependency stack (`compute_heavy_loop` inside `invoke_raw` inside
+`invoke_raw_extern`, with `.cargo/registry` and `/rustc/<hash>` frames between them), which is why
+that build is asserted by path suffix and never by count of distinct files.
+
 ## Inlined frames
 
 `resolve` returns the **whole inline stack**, innermost frame first, because one frame per address
