@@ -321,21 +321,15 @@ fn an_unknown_export_is_reported_not_panicked() {
 }
 
 #[test]
-fn the_instruction_ceiling_does_not_stop_execution() {
-    // Documents a gap rather than endorsing it: `invoke_function` discards the `Err` that
-    // `record_step` returns once the ceiling is passed, so a runaway contract runs to
-    // completion and the ceiling protects nothing. Pinned so that surfacing the error —
-    // the actual fix — fails this test loudly instead of changing behavior unnoticed.
+fn the_instruction_ceiling_stops_execution() {
+    // The error is now surfaced and execution halts.
     let mut probe = Probe::with_fuel(u64::MAX);
     probe.use_tracer(ExecutionTracer::new().with_instruction_ceiling(1));
 
     let outcome = probe.call("probe");
-    let events = probe.take_trace();
 
-    assert_eq!(outcome.unwrap(), PROBE_RESULT);
-    assert_eq!(
-        count(&events, EventType::Call),
-        1,
-        "the boundary events should be unaffected by the ceiling: {events:?}"
+    assert!(
+        outcome.is_err(),
+        "execution should trap when ceiling is reached"
     );
 }

@@ -1,5 +1,7 @@
 use crate::models::SourceFrame;
 use addr2line::FunctionName;
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::ops::Range;
 use std::rc::Rc;
 
@@ -26,11 +28,17 @@ pub enum SourceMapError {
     /// A section header claimed more bytes than the file contains, i.e. a truncated download
     /// or a partial write rather than a malformed build.
     Truncated,
-    /// A valid module with no `.debug_info` section, which is the ordinary case for a release
-    /// build: `debug` is off for `release` by default, so nothing was emitted to map.
+    /// A valid module with no `.debug_info`, and no `name` section able to name its functions
+    /// either.
+    ///
+    /// The ordinary case for a release build: `debug` is off for `release` by default, so nothing
+    /// was emitted to map. A stripped build that kept its `name` section is *not* this error — #157
+    /// loads it and resolves function-name-only frames — so reaching here means both sources are
+    /// gone, which is what `wasm-opt --strip-debug` leaves. (An *optimized* artifact keeps stale
+    /// DWARF and loses `name`, so it loads and resolves nothing; that is #162's case, not this one.)
     MissingDebugInfo {
-        /// Custom sections that *were* present, so the message can point out a `name` section
-        /// worth falling back to (see the function-name-only path in Phase 3's fallback chain).
+        /// Custom sections that *were* present, so the message can point out a `name` section worth
+        /// falling back to (see the function-name-only path in Phase 3's fallback chain).
         custom_sections: Vec<String>,
     },
     /// DWARF sections are present but `gimli` could not read them — an incomplete build, an
@@ -64,6 +72,18 @@ impl std::fmt::Display for SourceMapError {
                     write!(f, " The module carries no custom sections at all.")?;
                 } else {
                     write!(f, " Sections present: {}.", custom_sections.join(", "))?;
+                    if custom_sections
+                        .iter()
+                        .any(|section| section == NAME_SECTION)
+                    {
+                        // After #157 a readable `name` section loads, so saying "name" without
+                        // saying why it did not help would leave the user reading a contradiction.
+                        write!(
+                            f,
+                            " Its `name` section holds no function name for this module's code \
+                             section, so the function-name-only fallback has nothing to offer."
+                        )?;
+                    }
                 }
                 Ok(())
             }
@@ -94,10 +114,11 @@ impl std::error::Error for SourceMapError {}
 /// # What it holds
 ///
 /// An `addr2line::Context` built from the DWARF custom sections of the binary that was loaded
-/// ([`SourceMapper::new`]), or nothing at all ([`SourceMapper::unmapped`]) for a caller that
-/// chose to continue without symbols. Construction is fallible and reports *why* there are no
-/// symbols, because "the binary has no debug info" and "the address is outside every range"
-/// need different fixes and only the first is the user's to make.
+/// ([`SourceMapper::new`]), the same binary's `name` section when it has no DWARF at all (#157),
+/// or nothing ([`SourceMapper::unmapped`]) for a caller that chose to continue without symbols.
+/// Construction is fallible and reports *why* there are no symbols, because "the binary has no
+/// debug info" and "the address is outside every range" need different fixes and only the first is
+/// the user's to make.
 ///
 /// The facts below were checked against real builds rather than assumed, because each one
 /// decided how much code Phase 3 is:
@@ -108,8 +129,9 @@ impl std::error::Error for SourceMapError {}
 ///   individual custom sections, alongside `name`, `producers`, `target_features` and
 ///   Soroban's `contractspecv0`. They are not merged into one `DWARF` section, so
 ///   `ROADMAP.md`'s "parse the `.debug_info` and `.debug_line` sections" is literally right,
-///   and the only hand-written parsing here is the WASM container — the section table, plus the
-///   code section's function framing [`CodeMap`] needs — never DWARF itself.
+///   and the only hand-written parsing here is the WASM container — the section table, the code
+///   section's function framing [`CodeMap`] needs, and the two short subsection walks #157 reads for
+///   function names — never DWARF itself.
 ///   `AGENTS.md`'s "no custom DWARF parsing" rule holds: `gimli::Dwarf::load` reads the
 ///   sections, `addr2line::Context::from_dwarf` builds the index.
 /// * **`addr2line` needs no file wrapper and adds no dependency weight.** Its
@@ -178,10 +200,50 @@ pub struct SourceMapper {
     /// `context` indexes. `None` when the module has no code section or its function list does not
     /// match its declared size — DWARF resolution does not need it, so it is not an error.
     code: Option<CodeMap>,
+    /// The `name` section's function names: the fallback for a binary that carries symbols but no
+    /// DWARF (#157).
+    ///
+    /// `None` when there is no function-names subsection to read, which is also what makes
+    /// [`SourceMapper::new`] report [`SourceMapError::MissingDebugInfo`] rather than load a binary
+    /// that can say nothing about itself.
+    names: Option<NameSection>,
+    /// Addresses whose inline stack this mapper has already computed (#158).
+    ///
+    /// A trace revisits addresses: the tracer records one event per call boundary and per sample,
+    /// and a loop is the same handful of addresses over and over. Resolving one costs 250 ns for a
+    /// single frame and 1.05 µs at an inlined call site (measured on the committed fixture's
+    /// `opt-level = "z"` release build, where walking the line program dominates), so a run that
+    /// attributes thousands of events spends most of Stage 2 recomputing answers it just gave.
+    ///
+    /// A `RefCell` rather than `&mut self`, because [`ProfileAggregator::aggregate`] takes the mapper
+    /// by `&`: making every caller hold a mutable mapper to save a line-program walk is the worse
+    /// trade, and the pipeline is single-threaded, so the borrow check is all the synchronization
+    /// this needs.
+    ///
+    /// Bounded by [`RESOLUTION_CACHE_LIMIT`], and an address that resolves to nothing is stored too:
+    /// "nothing" is the most expensive answer to recompute on the stale-DWARF binary #162 warns about,
+    /// whose tables have to be walked to find out they describe no live code.
+    cache: RefCell<HashMap<usize, Vec<SourceFrame>>>,
 }
 
+/// How many resolved addresses [`SourceMapper::cache`] holds before it starts over (#158).
+///
+/// The bound exists because a cache keyed by program counter is only as small as the trace that
+/// fills it, and `AGENTS.md`'s OOM rule does not stop at the event buffer. The number is a working
+/// set, not a guess: a run attributes one address per call boundary and per sample, and the address
+/// space those can name is the binary's code section — 166 addresses for the committed fixture, 489
+/// for the real 622 KB build #141 measured — so 4,096 holds every address either of them can present
+/// twenty times over, and the frames it retains are worth a few hundred KB at that cap.
+///
+/// Overflow clears rather than evicts least-recently-used. Clearing costs recomputation and never
+/// correctness, which is all a cache is allowed to cost; an LRU's bookkeeping (or a new dependency)
+/// only pays for a workload that cycles through more distinct addresses than the cap, and a trace
+/// that does is one whose answers are too scattered for any reuse policy to help.
+const RESOLUTION_CACHE_LIMIT: usize = 4096;
+
 impl SourceMapper {
-    /// Build a mapper for one already-loaded WASM binary, reading its DWARF.
+    /// Build a mapper for one already-loaded WASM binary, reading its DWARF or, failing that, its
+    /// `name` section.
     ///
     /// Takes bytes rather than a path because [`load_wasm_file`] has already read and validated
     /// the file, and the same bytes are handed to `parse_module` — reading twice would let the
@@ -196,22 +258,32 @@ impl SourceMapper {
     /// # Errors
     ///
     /// Returns [`SourceMapError`] when the bytes are not a module ([`SourceMapError::NotWasm`],
-    /// [`SourceMapError::Truncated`]) or carry no usable DWARF
+    /// [`SourceMapError::Truncated`]) or carry neither DWARF nor function names
     /// ([`SourceMapError::MissingDebugInfo`], [`SourceMapError::UnreadableDwarf`]). Each message
     /// names the flag or step that would fix it.
     ///
     /// # Examples
     ///
     /// ```
-    /// use soroban_cost_profiler::source_map::{SourceMapper, SourceMapError};
+    /// use soroban_cost_profiler::source_map::{SourceMapError, SourceMapper};
     ///
-    /// // A release build with debug info off is the ordinary case, and it is an error worth
-    /// // reporting: the flamegraph will be unnamed, and only the user can fix the build.
+    /// // A build with debug info off but its `name` section left in is degraded, not hopeless:
+    /// // the mapper loads, and every frame it gives is a function with no file and no line.
     /// let stripped = include_bytes!("../fixtures/dwarf_probe/dwarf_probe_no_debug.wasm");
-    /// let error = SourceMapper::new(stripped).err().expect("this fixture ships without DWARF");
+    /// let mapper = SourceMapper::new(stripped).expect("this fixture keeps its `name` section");
+    /// assert!(!mapper.has_debug_info(), "names only — there is no DWARF to ask");
+    /// let stack = mapper.resolve(3);
+    /// assert_eq!(stack.len(), 1);
+    /// assert_eq!(stack[0].function_name, "caller_of_heavy");
+    /// assert_eq!(stack[0].file_path, None, "`name` is function-level, not line-level");
+    ///
+    /// // A binary with neither is the case that fails, and the message says what to change.
+    /// let mut bare = b"\0asm\x01\0\0\0".to_vec();
+    /// bare.extend([10, 2, 1, 0]); // the code section: one function, empty body
+    /// let error = SourceMapper::new(&bare).err().expect("no DWARF and no names");
     /// assert!(matches!(error, SourceMapError::MissingDebugInfo { .. }));
     ///
-    /// // The same functions built with `debug = 1` load, and the difference is the point.
+    /// // The same functions built with `debug = 1` load DWARF, and the difference is the point.
     /// let mapped = SourceMapper::new(include_bytes!("../fixtures/dwarf_probe/dwarf_probe.wasm"));
     /// assert!(mapped.unwrap().has_debug_info());
     /// ```
@@ -219,12 +291,24 @@ impl SourceMapper {
     /// [`load_wasm_file`]: crate::tracer::load_wasm_file
     pub fn new(wasm_bytes: &[u8]) -> Result<Self, SourceMapError> {
         let sections = WasmSections::parse(wasm_bytes)?;
+        let names = NameSection::parse(&sections);
 
         // `.debug_info` is what makes the other sections meaningful; a module that has line
-        // tables but no compilation units cannot yield a function name.
+        // tables but no compilation units cannot yield a file or a line. It can still name the
+        // function an address belongs to, and that is #157's fallback — enough to load. A module
+        // with neither has nothing to say about itself, and only the user's build flag fixes that.
         if sections.get(DEBUG_INFO).is_none() {
-            return Err(SourceMapError::MissingDebugInfo {
-                custom_sections: sections.custom_names(),
+            let Some(names) = names else {
+                return Err(SourceMapError::MissingDebugInfo {
+                    custom_sections: sections.custom_names(),
+                });
+            };
+
+            return Ok(Self {
+                context: None,
+                code: sections.code,
+                names: Some(names),
+                cache: RefCell::new(HashMap::new()),
             });
         }
 
@@ -237,6 +321,8 @@ impl SourceMapper {
         Ok(Self {
             context: Some(context),
             code: sections.code,
+            names,
+            cache: RefCell::new(HashMap::new()),
         })
     }
 
@@ -250,6 +336,8 @@ impl SourceMapper {
         Self {
             context: None,
             code: None,
+            names: None,
+            cache: RefCell::new(HashMap::new()),
         }
     }
 
@@ -262,26 +350,38 @@ impl SourceMapper {
         self.context.is_some()
     }
 
-    /// Resolve one program counter to the source frame that produced it.
+    /// Resolve one program counter to the inline stack that produced it, innermost frame first.
     ///
     /// `pc` is an offset into the WASM **code section**, the address space the DWARF line tables
     /// are written against; #153 owns translating whatever the engine reports into that form.
     ///
-    /// Returns `None` when the address has no function to name: no DWARF loaded, an address
-    /// outside every range, one too large to be a code-section offset, a lookup that `gimli`
-    /// could not complete, or a frame whose name is empty. The name is what makes a frame, because `CallStackNode`'s children are keyed by
-    /// `function_name` — an unnamed frame would pool every unattributable address into one
-    /// anonymous root and quietly absorb their cost. The location fields stay optional and
-    /// independent: measured against `fixtures/dwarf_probe`, code-section address `2` yields a
-    /// name and no location at all (the prologue precedes the first line program), and `61`..`71`
-    /// yield a file with no line.
+    /// The order is the one `addr2line` walks a stack: the inlined function, then whoever inlined
+    /// it, down to the function the wasm call actually entered. Measured against
+    /// `fixtures/dwarf_probe`, 160 of its 166 code-section addresses answer at all and **10 of
+    /// those answer with two frames** — address `14` is `<u64>::wrapping_add` inside
+    /// `caller_of_heavy`, each with its own file and line, which is the reason one `SourceFrame`
+    /// per address cannot describe what ran.
     ///
-    /// The frame is the **innermost** one at that address, which for inlined code is the inlined
-    /// function rather than its caller: address `14` resolves to `<u64>::wrapping_add` inside
-    /// `caller_of_heavy`. Keeping the whole inline stack is #156.
+    /// An empty `Vec` means "nothing attributable here": an address outside every range, one too
+    /// large to be a code-section offset, a lookup `gimli` could not complete, or — with no DWARF
+    /// loaded — no `name` entry for the function the address falls in either. A
+    /// frame DWARF gives no name for is dropped rather than ending the stack — it cannot be a
+    /// [`crate::models::CallStackNode`] key, but the callers beneath it still can be, so the name
+    /// rule no longer costs a whole address its attribution the way it did when only the innermost
+    /// frame was read. The location fields stay optional and independent: address `2` yields a name
+    /// and no location at all (the prologue precedes the first line program), and `61`..`71` yield
+    /// a file with no line.
     ///
-    /// Takes `&self`, so one mapper can serve a whole trace, and #158's cache would make it
-    /// `&mut self` — a change to weigh against `aggregate` holding `&SourceMapper`.
+    /// When no DWARF is loaded — a `debug = false` build whose `name` section survived — this answers
+    /// through [`SourceMapper::resolve_from_name_section`] instead. The order is DWARF, then `name`,
+    /// then the `wasm[pc]` the aggregator falls back to, and #163 is the write-up of why.
+    ///
+    /// Takes `&self`, so one mapper can serve a whole trace, and repeats itself through an internal
+    /// address cache rather than through a `&mut self` signature #158 could have asked for —
+    /// `aggregate` holds the mapper by reference, and a cache that cost every caller a `&mut` would
+    /// be a worse trade than the walk it saves. Allocating one
+    /// `Vec` per event sits inside `AGENTS.md`'s OOM rule for the same reason the rest of Stage 2
+    /// does: the tracer emits one event per call boundary, not per instruction.
     ///
     /// # Examples
     ///
@@ -290,39 +390,145 @@ impl SourceMapper {
     ///
     /// // A mapper without symbols resolves nothing, and must not panic.
     /// let mapper = SourceMapper::unmapped();
-    /// assert!(mapper.resolve(0).is_none());
+    /// assert!(mapper.resolve(0).is_empty());
     ///
     /// // A real build resolves: this fixture is Rust code compiled for wasm32-unknown-unknown.
     /// let fixture = include_bytes!("../fixtures/dwarf_probe/dwarf_probe.wasm");
     /// let mapper = SourceMapper::new(fixture).expect("the fixture carries DWARF");
-    /// let frame = mapper.resolve(3).expect("address 3 is inside `caller_of_heavy`");
-    /// assert_eq!(frame.function_name, "caller_of_heavy");
-    /// assert_eq!(frame.line_number, Some(39));
+    /// let stack = mapper.resolve(3);
+    /// assert_eq!(stack.len(), 1, "address 3 is not an inlined call site");
+    /// assert_eq!(stack[0].function_name, "caller_of_heavy");
+    /// assert_eq!(stack[0].line_number, Some(39));
+    ///
+    /// // Address 14 is inlined core code, so the stack names both halves, innermost first.
+    /// let stack = mapper.resolve(14);
+    /// let names: Vec<&str> = stack.iter().map(|frame| frame.function_name.as_str()).collect();
+    /// assert_eq!(names, ["<u64>::wrapping_add", "caller_of_heavy"]);
+    /// assert_eq!(stack[1].line_number, Some(39), "the caller's line is the call site");
     /// ```
-    pub fn resolve(&self, pc: usize) -> Option<SourceFrame> {
-        let context = self.context.as_ref()?;
+    pub fn resolve(&self, pc: usize) -> Vec<SourceFrame> {
+        let Some(context) = self.context.as_ref() else {
+            // No DWARF means there is nothing to walk, and no cache either: #157's fallback finds a
+            // body by binary search over [`CodeMap::bodies`] and clones one name, measured at 61 ns —
+            // less than a hash lookup and a stack clone would cost. Caching it would make the
+            // degraded path slower, which is not what a cache is for.
+            return self.resolve_from_name_section(pc);
+        };
 
+        if let Some(stack) = self.cache.borrow().get(&pc) {
+            return stack.clone();
+        }
+
+        let stack = self.resolve_dwarf(context, pc);
+
+        let mut cache = self.cache.borrow_mut();
+        if cache.len() >= RESOLUTION_CACHE_LIMIT {
+            cache.clear();
+        }
+        cache.insert(pc, stack.clone());
+
+        stack
+    }
+
+    /// Ask DWARF for one address's inline stack, innermost frame first.
+    ///
+    /// [`SourceMapper::resolve`] is the public door and the one that remembers; this is the walk it
+    /// caches. Splitting them keeps the cache out of the semantics: everything #146–#156 pinned —
+    /// the range guards, `skip_all_loads`, a nameless frame ending only itself — lives here, and is
+    /// reached at most once per address per mapper.
+    fn resolve_dwarf(&self, context: &Context, pc: usize) -> Vec<SourceFrame> {
         // `addr2line` probes the half-open range `[address, address + 1)`, so `u64::MAX` overflows
         // inside that computation and panics a debug build. No code section is within orders of
         // magnitude of that, so an address this high is not an offset and gets the same answer as
         // any other address outside every range.
-        let address = u64::try_from(pc).ok()?;
+        let Ok(address) = u64::try_from(pc) else {
+            return Vec::new();
+        };
         if address == u64::MAX {
-            return None;
+            return Vec::new();
         }
 
         // `skip_all_loads`: every section was copied into the reader at construction, so there is
         // nothing to load, and a split-DWARF request would try to open a file that never existed.
-        let mut frames = context.find_frames(address).skip_all_loads().ok()?;
-        let frame = frames.next().ok()??;
-        let function_name = frame_name(frame.function.as_ref()?)?;
+        let Ok(mut frames) = context.find_frames(address).skip_all_loads() else {
+            return Vec::new();
+        };
 
-        let location = frame.location.as_ref();
-        Some(SourceFrame {
+        // A `gimli` error partway through the stack stops the walk and keeps what was collected:
+        // the frames already read are ones the trace can be charged to, and dropping them because a
+        // frame further out is unreadable would throw away real attribution.
+        let mut stack = Vec::new();
+        while let Ok(Some(frame)) = frames.next() {
+            let Some(function_name) = frame.function.as_ref().and_then(frame_name) else {
+                continue;
+            };
+
+            let location = frame.location.as_ref();
+            stack.push(SourceFrame {
+                function_name,
+                file_path: location.and_then(|loc| loc.file).map(str::to_string),
+                line_number: location.and_then(|loc| loc.line),
+            });
+        }
+
+        stack
+    }
+
+    /// Resolve one program counter from the `name` section alone: at most one frame, no file and no
+    /// line.
+    ///
+    /// `pc` is the same code-section address [`SourceMapper::resolve`] takes. `name` records one
+    /// symbol per *function*, so any address inside a body gets that body's name and nothing finer:
+    /// `caller_of_heavy` at `3` and at `14` alike, where DWARF answers `14` with
+    /// `<u64>::wrapping_add`. That is the whole of what a binary without DWARF can be told, which is
+    /// why this is a fallback and not a substitute.
+    ///
+    /// Two index spaces meet here. `name` keys its entries by module function index, **imports
+    /// included**; [`CodeMap::bodies`] is the *defined* function list, which begins after them. The
+    /// import count is read from the import section in the same walk, and a module whose import
+    /// section does not parse yields no names at all — charging `memory_heavy_loop`'s cost to the
+    /// name of a host import would be worse than naming nothing.
+    ///
+    /// Names arrive demangled and closure-collapsed exactly as DWARF names do, because the section
+    /// stores rustc's raw symbols (`_RNvNtNtCs…5guest3vec13vec_push_back`) and a frame keyed on one
+    /// would not be the frame DWARF gives for the same function.
+    ///
+    /// Returns an empty `Vec` for an address in no function body, and for a mapper that loaded no
+    /// names — including [`SourceMapper::unmapped`], which never has any.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use soroban_cost_profiler::source_map::SourceMapper;
+    ///
+    /// let stripped = include_bytes!("../fixtures/dwarf_probe/dwarf_probe_no_debug.wasm");
+    /// let mapper = SourceMapper::new(stripped).expect("the fixture carries a `name` section");
+    ///
+    /// // Every address inside the first function's body answers with its name.
+    /// let stack = mapper.resolve_from_name_section(3);
+    /// assert_eq!(stack.len(), 1);
+    /// assert_eq!(stack[0].function_name, "caller_of_heavy");
+    /// assert_eq!(stack[0].line_number, None, "`name` has no line tables to read");
+    ///
+    /// // The count byte and the size prefixes belong to no function, and so does anything outside.
+    /// assert!(mapper.resolve_from_name_section(0).is_empty());
+    /// assert!(mapper.resolve_from_name_section(4000).is_empty());
+    /// ```
+    pub fn resolve_from_name_section(&self, pc: usize) -> Vec<SourceFrame> {
+        let (Some(names), Some(code)) = (self.names.as_ref(), self.code.as_ref()) else {
+            return Vec::new();
+        };
+
+        let Some(function_name) = code.function_at(pc).and_then(|index| names.name_at(index))
+        else {
+            return Vec::new();
+        };
+
+        vec![SourceFrame {
             function_name,
-            file_path: location.and_then(|loc| loc.file).map(str::to_string),
-            line_number: location.and_then(|loc| loc.line),
-        })
+            file_path: None,
+            line_number: None,
+        }]
     }
 
     /// Where this binary's code section is, for translating a position in the file.
@@ -335,7 +541,7 @@ impl SourceMapper {
         self.code.as_ref()
     }
 
-    /// Resolve a byte offset *in the file* to the source frame that produced it.
+    /// Resolve a byte offset *in the file* to the inline stack that produced it.
     ///
     /// The same lookup as [`SourceMapper::resolve`], one address space earlier: the offset is moved
     /// into code-section-relative form by [`CodeMap::to_code_address`] before DWARF is asked, which
@@ -345,8 +551,8 @@ impl SourceMapper {
     /// Use this for anything that reads the binary — a section walk, a `wasm-objdump` figure, a
     /// hand-checked offset. Use [`SourceMapper::resolve`] for anything already in DWARF's space.
     ///
-    /// Returns `None` if this mapper has no [`CodeMap`], if the offset is outside the code section,
-    /// or if the translated address resolves to no frame.
+    /// Returns an empty `Vec` if this mapper has no [`CodeMap`], if the offset is outside the code
+    /// section, or if the translated address resolves to no frame.
     ///
     /// # Examples
     ///
@@ -363,14 +569,25 @@ impl SourceMapper {
     /// assert_eq!(map.to_code_address(111), Some(0));
     /// assert_eq!(map.to_code_address(110), None, "before the section is not in it");
     ///
-    /// let frame = mapper
-    ///     .resolve_file_offset(114)
-    ///     .expect("file offset 114 is code address 3");
-    /// assert_eq!(frame.function_name, "caller_of_heavy");
-    /// assert_eq!(frame.line_number, Some(39));
+    /// let stack = mapper.resolve_file_offset(114);
+    /// assert_eq!(stack.len(), 1, "file offset 114 is code address 3");
+    /// assert_eq!(stack[0].function_name, "caller_of_heavy");
+    /// assert_eq!(stack[0].line_number, Some(39));
+    ///
+    /// // The offset translation reaches inlined code on the same two frames `resolve` names.
+    /// let stack = mapper.resolve_file_offset(125);
+    /// assert_eq!(stack.len(), 2, "file offset 125 is code address 14");
+    /// assert_eq!(stack[0].function_name, "<u64>::wrapping_add");
     /// ```
-    pub fn resolve_file_offset(&self, file_offset: usize) -> Option<SourceFrame> {
-        let address = self.code.as_ref()?.to_code_address(file_offset)?;
+    pub fn resolve_file_offset(&self, file_offset: usize) -> Vec<SourceFrame> {
+        let Some(address) = self
+            .code
+            .as_ref()
+            .and_then(|map| map.to_code_address(file_offset))
+        else {
+            return Vec::new();
+        };
+
         self.resolve(address)
     }
 }
@@ -406,8 +623,9 @@ impl SourceMapper {
 /// assert_eq!(map.function_at(2), Some(0));
 /// assert_eq!(map.function_at(0), None, "the count byte belongs to no function body");
 /// for (index, body) in bodies.iter().enumerate() {
-///     let frame = mapper.resolve(body.start).expect("a body's first byte is its prologue");
-///     assert_eq!(map.function_at(body.start), Some(index), "{frame:?}");
+///     let stack = mapper.resolve(body.start);
+///     assert!(!stack.is_empty(), "a body's first byte is its prologue");
+///     assert_eq!(map.function_at(body.start), Some(index), "{stack:?}");
 /// }
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -418,8 +636,8 @@ pub struct CodeMap {
     len: usize,
     /// `start..end` of each defined function's body, relative to [`Self::base`], in code-section
     /// order. The code section lists only *defined* functions, so these are positions in that list —
-    /// turning one into a module function index needs the import count, which #157's `name`-section
-    /// work adds.
+    /// a module function index is this plus the import count, which is how [`NameSection`] lines
+    /// the two up.
     bodies: Vec<Range<usize>>,
 }
 
@@ -494,6 +712,19 @@ const CODE_SECTION: u64 = 10;
 /// unit, so `.debug_info` is what makes the other `.debug_*` sections meaningful.
 const DEBUG_INFO: &str = ".debug_info";
 
+/// The custom section that names functions without naming files: `name`.
+///
+/// Present in every `rust-lld` build, including `debug = false` ones, and the only symbol source
+/// for a binary with no DWARF (#157). Binaryen's optimizer deletes it unless `-g` is passed — see
+/// `docs/spikes/02_wasm_name_section_fallback.md`.
+const NAME_SECTION: &str = "name";
+
+/// The `name` subsection that maps function indices to symbols.
+const FUNCTION_NAMES: u8 = 1;
+
+/// The section whose function entries offset a `name` index into a defined-function position.
+const IMPORT_SECTION: u64 = 2;
+
 /// DWARF section names, as they appear in a WASM custom section.
 ///
 /// Rust emits each section as its own custom section rather than one merged `DWARF` blob, so
@@ -516,6 +747,118 @@ fn load_dwarf(sections: &WasmSections) -> Dwarf {
     .expect("copying section bytes into a reader cannot fail")
 }
 
+/// The `name` custom section's function names, positioned by defined-function index.
+///
+/// #141's spike is where this layout was measured, and the two facts that decide the parser are
+/// recorded there: the payload is a chain of `u8 kind` + `uleb128 size` + body subsections with
+/// **no leading version byte** — the framing is only unambiguous because the bytes tile the payload
+/// exactly — and only kind `1`, function names, matters here. Its body is `uleb128 count` then
+/// `count` records of `uleb128 funcidx` + `uleb128 len` + `len` UTF-8 bytes.
+///
+/// `funcidx` counts the whole function index space, imports first, so aligning it with a code
+/// section address needs the import count; see [`SourceMapper::resolve_from_name_section`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NameSection {
+    /// One entry per defined function, in code-section order, already rendered by
+    /// [`demangle_symbol`]. Names for imported functions are dropped rather than stored: no
+    /// code-section address can ever reach them.
+    names: Vec<Option<String>>,
+}
+
+impl NameSection {
+    /// Read one module's function names, or conclude it has none worth loading.
+    ///
+    /// `None` — which is what makes [`SourceMapper::new`] report
+    /// [`SourceMapError::MissingDebugInfo`] instead — when the section is absent, when its
+    /// subsection framing does not tile the payload, when its records do not tile the function-names
+    /// body, or when nothing in it names a function this module's code section contains.
+    ///
+    /// Both declared counts are bounded by the bytes that carry them, not the reverse: reading a
+    /// section claiming millions of names costs one failed lookup and no allocation, which is
+    /// `AGENTS.md`'s OOM rule applied to a binary rather than to a trace.
+    fn parse(sections: &WasmSections) -> Option<Self> {
+        let payload = sections.get(NAME_SECTION)?;
+        let imported = sections.imported_functions?;
+        let mut names = vec![None; sections.code.as_ref()?.bodies().len()];
+
+        let mut cursor = 0;
+        while cursor < payload.len() {
+            let kind = payload[cursor];
+            cursor += 1;
+
+            let size = usize::try_from(WasmSections::read_uleb(payload, &mut cursor).ok()?).ok()?;
+            let body_end = cursor.checked_add(size)?;
+            if body_end > payload.len() {
+                return None;
+            }
+
+            // Unknown subsection kinds are skipped, not rejected: the section is shared with
+            // proposals this stage never reads (kind 7, seen in the fixture, names globals).
+            if kind == FUNCTION_NAMES {
+                read_function_names(&payload[cursor..body_end], imported, &mut names)?;
+            }
+
+            cursor = body_end;
+        }
+
+        // A section that names nothing is not a fallback — it is the same silence in a smaller
+        // envelope, and loading it would let a run finish with no warning at all.
+        names.iter().any(Option::is_some).then_some(Self { names })
+    }
+
+    fn name_at(&self, defined_index: usize) -> Option<String> {
+        self.names.get(defined_index).and_then(Clone::clone)
+    }
+}
+
+/// Fill `names` from one function-names subsection body.
+///
+/// `None` when the records do not tile the body. Partial reads are not offered: a name attached to
+/// the wrong function is a wrong flamegraph, and the alternative is an unnamed one.
+fn read_function_names(body: &[u8], imported: u64, names: &mut [Option<String>]) -> Option<()> {
+    let mut cursor = 0;
+    let count = WasmSections::read_uleb(body, &mut cursor).ok()?;
+
+    for _ in 0..count {
+        let funcidx = WasmSections::read_uleb(body, &mut cursor).ok()?;
+        let len = usize::try_from(WasmSections::read_uleb(body, &mut cursor).ok()?).ok()?;
+        let end = cursor.checked_add(len)?;
+        let raw = body.get(cursor..end)?;
+        cursor = end;
+
+        // A name for an import (below the module's function-import count) is not a name for anything
+        // a code-section address can reach, and a name past the defined-function list is the same
+        // kind of noise. Neither is a reason to abandon the section.
+        let Some(defined) = funcidx.checked_sub(imported) else {
+            continue;
+        };
+        let Some(slot) = usize::try_from(defined)
+            .ok()
+            .and_then(|index| names.get_mut(index))
+        else {
+            continue;
+        };
+
+        if slot.is_some() {
+            continue; // first entry wins; a duplicate is noise, not a rename
+        }
+        *slot = std::str::from_utf8(raw).ok().and_then(demangle_symbol);
+    }
+
+    (cursor == body.len()).then_some(())
+}
+
+/// The `name` section's counterpart to [`frame_name`]: demangle, then collapse closures.
+///
+/// The section stores no language, so this goes through `addr2line`'s heuristics — the same
+/// rustc-then-C++ order it applies to a DWARF name with no `DW_AT_language` — and returns a name it
+/// cannot parse byte-for-byte as stored. That is what makes `#[no_mangle] extern "C"` export names
+/// arrive plain here too, exactly as they do from DWARF.
+fn demangle_symbol(raw: &str) -> Option<String> {
+    let name = addr2line::demangle_auto(std::borrow::Cow::Borrowed(raw), None);
+    (!name.is_empty()).then(|| collapse_closures(&name))
+}
+
 /// The custom sections a mapper keeps, in file order.
 struct WasmSections {
     /// `(name, payload)`, holding only the sections this stage can use: `.debug_*` for source
@@ -526,6 +869,13 @@ struct WasmSections {
     /// module has no code section or its function list does not fit its declared size; only the
     /// section's *location* is kept, never its bytes, so this costs a `Vec` of ranges and no copy.
     code: Option<CodeMap>,
+    /// How many function indices belong to imports, so a `name` section's indices line up with
+    /// [`CodeMap`]'s defined-function list (#157).
+    ///
+    /// `Some(0)` when the module carries no import section, which is what both `dwarf_probe`
+    /// fixtures do, and `None` when one is present but does not parse — a missing fallback is
+    /// honest, an offset guessed from a section that would not read is not.
+    imported_functions: Option<u64>,
 }
 
 impl WasmSections {
@@ -544,6 +894,8 @@ impl WasmSections {
         let mut cursor = 8; // past magic and version
         let mut retained = Vec::new();
         let mut code = None;
+        let mut imported_functions = Some(0);
+        let mut seen_imports = false;
 
         while cursor < bytes.len() {
             let id = Self::read_uleb(bytes, &mut cursor)?;
@@ -581,10 +933,21 @@ impl WasmSections {
                 code = CodeMap::parse(&bytes[cursor..end], cursor);
             }
 
+            // Section id 2 is the import section. Its function entries are how many indices a
+            // `name` section counts before it reaches the first defined function (#157).
+            if !seen_imports && id == IMPORT_SECTION {
+                seen_imports = true;
+                imported_functions = count_function_imports(&bytes[cursor..end]);
+            }
+
             cursor = end;
         }
 
-        Ok(Self { retained, code })
+        Ok(Self {
+            retained,
+            code,
+            imported_functions,
+        })
     }
 
     /// Read a LEB128 unsigned integer, advancing the cursor.
@@ -626,6 +989,58 @@ impl WasmSections {
     fn custom_names(&self) -> Vec<String> {
         self.retained.iter().map(|(name, _)| name.clone()).collect()
     }
+}
+
+/// Count the function imports in an import section payload.
+///
+/// `None` if the payload does not parse or leaves bytes over, which [`WasmSections`] reads as "the
+/// offset between a `name` index and a defined function is unknown" rather than as zero. Each entry
+/// is a module name, a field name, and an extern descriptor; the descriptor's shape is what has to
+/// be walked correctly to reach the next entry, and a kind this does not recognize stops the count
+/// instead of resuming on a misaligned byte.
+fn count_function_imports(payload: &[u8]) -> Option<u64> {
+    let mut cursor = 0;
+    let count = WasmSections::read_uleb(payload, &mut cursor).ok()?;
+    let mut functions = 0;
+
+    for _ in 0..count {
+        // Both names are length-prefixed bytes, and the section's own framing is the only thing
+        // telling where one entry's descriptor ends.
+        for _ in 0..2 {
+            let len = usize::try_from(WasmSections::read_uleb(payload, &mut cursor).ok()?).ok()?;
+            cursor = cursor.checked_add(len)?;
+            if cursor > payload.len() {
+                return None;
+            }
+        }
+
+        match payload.get(cursor).copied()? {
+            0 => {
+                cursor += 1;
+                WasmSections::read_uleb(payload, &mut cursor).ok()?;
+                functions += 1;
+            }
+            // A table or memory is `limits`: a flags byte, a minimum, a maximum when the flags say
+            // bounded, and one more byte when the memory is shared.
+            1 | 2 => {
+                cursor += 1;
+                let flags = *payload.get(cursor)?;
+                cursor += 1;
+                WasmSections::read_uleb(payload, &mut cursor).ok()?;
+                if flags & 1 == 1 {
+                    WasmSections::read_uleb(payload, &mut cursor).ok()?;
+                }
+                if matches!(flags, 0x40 | 0x41) {
+                    cursor += 1;
+                }
+            }
+            // A global is a value type byte and a mutability byte.
+            3 => cursor += 3,
+            _ => return None,
+        }
+    }
+
+    (cursor == payload.len()).then_some(functions)
 }
 
 /// The name to put in a frame, demangled where the DWARF says how.
@@ -762,7 +1177,7 @@ fn closure_marker(inner: &str) -> Option<String> {
 
 /// Whether a custom section is worth keeping in memory.
 fn retain(name: &str) -> bool {
-    name == "name" || name.starts_with(".debug")
+    name == NAME_SECTION || name.starts_with(".debug")
 }
 
 #[cfg(test)]
@@ -817,8 +1232,93 @@ mod tests {
         bytes
     }
 
+    /// Assemble a module from `(section id, payload)` pairs, so #157's tests can place a real
+    /// import section in front of a `name` section instead of only custom sections.
+    fn raw_module(sections: &[(u64, Vec<u8>)]) -> Vec<u8> {
+        let mut bytes = b"\0asm\x01\0\0\0".to_vec();
+
+        for (id, payload) in sections {
+            bytes.extend(uleb(*id));
+            bytes.extend(uleb(payload.len() as u64));
+            bytes.extend_from_slice(payload);
+        }
+
+        bytes
+    }
+
+    /// One custom section's payload: its name, then its bytes.
+    fn custom(name: &str, body: &[u8]) -> Vec<u8> {
+        let mut out = uleb(name.len() as u64);
+        out.extend(name.as_bytes());
+        out.extend(body);
+        out
+    }
+
+    /// A function-names subsection — kind `1`, size, then `count` records of index, length, bytes —
+    /// framed the way `rust-lld` frames it, with the version byte #141 measured as absent.
+    fn function_names(entries: &[(u64, &str)]) -> Vec<u8> {
+        let mut body = uleb(entries.len() as u64);
+        for (index, name) in entries {
+            body.extend(uleb(*index));
+            body.extend(uleb(name.len() as u64));
+            body.extend(name.as_bytes());
+        }
+
+        let mut out = vec![1]; // FUNCTION_NAMES
+        out.extend(uleb(body.len() as u64));
+        out.extend(body);
+        out
+    }
+
+    /// An import section payload of `functions` function imports: two names and a type index each.
+    fn imports(functions: u64) -> Vec<u8> {
+        let mut out = uleb(functions);
+        for _ in 0..functions {
+            out.extend(uleb(3));
+            out.extend(b"env");
+            out.extend(uleb(4));
+            out.extend(b"call");
+            out.push(0); // extern kind: function
+            out.extend(uleb(0)); // type index
+        }
+        out
+    }
+
+    /// A code section of `count` two-byte bodies, so each function owns addresses an offset can land
+    /// in and the gaps between them are still just the size prefixes.
+    fn code_bodies(count: u64) -> Vec<u8> {
+        let mut out = uleb(count);
+        for _ in 0..count {
+            out.extend(uleb(2));
+            out.extend([0x00, 0x0b]); // no locals, then `end`
+        }
+        out
+    }
+
+    /// The name each defined function's first byte answers with, through the fallback.
+    fn named_bodies(mapper: &SourceMapper) -> Vec<String> {
+        let map = mapper
+            .code_map()
+            .expect("these modules carry a code section");
+
+        map.bodies()
+            .iter()
+            .map(|body| {
+                mapper
+                    .resolve_from_name_section(body.start)
+                    .pop()
+                    .map(|frame| frame.function_name)
+                    .unwrap_or_else(|| panic!("no name for the body at {}", body.start))
+            })
+            .collect()
+    }
+
     /// The fixture that carries DWARF, built by `fixtures/dwarf_probe/build.sh`.
     const DWARF_PROBE: &[u8] = include_bytes!("../fixtures/dwarf_probe/dwarf_probe.wasm");
+
+    /// The same three functions built with `debug = false`: no DWARF, same `name` section.
+    const NO_DEBUG_PROBE: &[u8] =
+        include_bytes!("../fixtures/dwarf_probe/dwarf_probe_no_debug.wasm");
 
     #[test]
     fn an_empty_input_is_not_a_module() {
@@ -851,7 +1351,10 @@ mod tests {
 
     #[test]
     fn a_module_without_debug_info_reports_the_build_flag_that_fixes_it() {
-        // The ordinary case for a release build, and the one a user can actually act on.
+        // The ordinary case for a release build, and the one a user can actually act on. Since #157
+        // a readable `name` section would load instead, so this payload is deliberately not one: the
+        // bytes after the section name are ASCII, whose first subsection claims more length than the
+        // payload holds.
         let stripped = module(&[("name", b"functions"), ("producers", b"CL 17")]);
 
         let error = SourceMapper::new(&stripped)
@@ -959,10 +1462,13 @@ mod tests {
         assert!(!reason.is_empty(), "and say what gimli objected to");
     }
 
-    /// The frame the fixture's DWARF gives for `pc`, with a failure that names the address.
+    /// The innermost frame the fixture's DWARF gives for `pc`, with a failure that names the
+    /// address. Tests that care about the rest of the inline stack read `resolve` directly.
     fn frame_at(mapper: &SourceMapper, pc: usize) -> SourceFrame {
         mapper
             .resolve(pc)
+            .into_iter()
+            .next()
             .unwrap_or_else(|| panic!("pc {pc} lies inside the fixture's code section"))
     }
 
@@ -1039,6 +1545,110 @@ mod tests {
             frame.file_path
         );
         assert!(frame.line_number.is_some_and(|line| line > 0));
+    }
+
+    #[test]
+    fn an_inlined_call_site_answers_with_the_whole_stack_innermost_first() {
+        // #156's acceptance criterion, on the fixture's own inlined call. Address `14` is
+        // `wrapping_add` inlined into `caller_of_heavy`, and the two frames name different files
+        // *and* different lines: one `SourceFrame` per address could say which code the address is,
+        // but never which call site put it there. The order is the one `addr2line` walks -- callee
+        // first, caller last -- so `stack[0]` stays the frame the tree keys on and the callers
+        // beneath it are available to anyone who wants the depth.
+        let mapper = SourceMapper::new(DWARF_PROBE).expect("the fixture carries DWARF");
+
+        let stack = mapper.resolve(14);
+        let names: Vec<&str> = stack
+            .iter()
+            .map(|frame| frame.function_name.as_str())
+            .collect();
+
+        assert_eq!(names, ["<u64>::wrapping_add", "caller_of_heavy"]);
+        assert_eq!(
+            stack[0].line_number,
+            Some(2612),
+            "core's line, from the fixture's DWARF"
+        );
+        assert_eq!(stack[1].line_number, Some(39), "the contract's call site");
+        assert_ne!(
+            stack[0].file_path, stack[1].file_path,
+            "an inline stack whose frames share a file is a different shape than this one: {stack:?}"
+        );
+    }
+
+    #[test]
+    fn the_stack_depth_is_measured_across_the_whole_code_section() {
+        // Not one hand-picked address but the fixture's entire 166-byte code section, because the
+        // interesting fact is the *distribution*: inlining is the exception here, not the rule. 6
+        // addresses are framing bytes that belong to no instruction, 150 yield one frame, and 10
+        // yield two -- `14` in `caller_of_heavy`, then `101`..=`109`, nine consecutive bytes of
+        // `memory_heavy_loop`'s inlined `wrapping_add`. Nothing is deeper than two, which is what a
+        // three-line fixture should produce; a third level would mean the walk is reading past the
+        // function that owns the address.
+        let mapper = SourceMapper::new(DWARF_PROBE).expect("the fixture carries DWARF");
+
+        let depths: Vec<(usize, usize)> = (0..166usize)
+            .map(|pc| (pc, mapper.resolve(pc).len()))
+            .filter(|(_, depth)| *depth != 1)
+            .collect();
+        let singles = 166 - depths.len();
+
+        assert_eq!(
+            depths,
+            vec![
+                (0, 0),
+                (1, 0),
+                (14, 2),
+                (16, 0),
+                (17, 0),
+                (101, 2),
+                (102, 2),
+                (103, 2),
+                (104, 2),
+                (105, 2),
+                (106, 2),
+                (107, 2),
+                (108, 2),
+                (109, 2),
+                (157, 0),
+                (165, 0),
+            ]
+        );
+        assert_eq!(singles, 150);
+
+        // The nine inlined bytes of one loop body are the same call, so they must be the same stack
+        // -- otherwise the tree would pool them under nine different names.
+        let loop_stack = mapper.resolve(101);
+        for address in 101..110 {
+            assert_eq!(mapper.resolve(address), loop_stack, "address {address}");
+        }
+        assert_eq!(
+            loop_stack
+                .iter()
+                .map(|frame| frame.function_name.as_str())
+                .collect::<Vec<_>>(),
+            ["<u64>::wrapping_add", "memory_heavy_loop"]
+        );
+    }
+
+    #[test]
+    fn every_stack_ends_in_a_function_the_contract_exports() {
+        // The outermost frame is the one a wasm call boundary can name, so `addr2line`'s walk has to
+        // finish there: if a stack ever bottomed out inside `core`, the depth Stage 3 would build
+        // from it is wrong rather than merely richer.
+        let mapper = SourceMapper::new(DWARF_PROBE).expect("the fixture carries DWARF");
+        let exported = ["caller_of_heavy", "memory_heavy_loop", "compute_heavy_loop"];
+
+        for address in 0..166 {
+            let stack = mapper.resolve(address);
+            let Some(outer) = stack.last() else { continue };
+
+            assert!(
+                exported.contains(&outer.function_name.as_str()),
+                "address {address} bottoms out in {:?}: {stack:?}",
+                outer.function_name
+            );
+        }
     }
 
     /// One frame measured out of a `debug = 2`, `opt-level = 1` `wasm32-unknown-unknown` build of a
@@ -1159,26 +1769,382 @@ mod tests {
         let mapper = SourceMapper::new(DWARF_PROBE).expect("the fixture carries DWARF");
 
         for address in 0..166 {
-            let Some(name) = mapper.resolve(address).map(|frame| frame.function_name) else {
-                continue;
-            };
+            for name in mapper
+                .resolve(address)
+                .into_iter()
+                .map(|frame| frame.function_name)
+            {
+                assert_eq!(
+                    collapse_closures(&name),
+                    name,
+                    "address {address} named {name:?} was rewritten"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_build_with_names_but_no_dwarf_loads_and_names_its_functions() {
+        // #157's "done" row: a stripped binary resolves to function names. `debug = false` keeps
+        // the `name` section and drops every `.debug_*`, so this is the case the fallback exists for
+        // and the reason `new` no longer refuses to load it.
+        let mapper =
+            SourceMapper::new(NO_DEBUG_PROBE).expect("the stripped fixture keeps its `name`");
+
+        assert!(
+            !mapper.has_debug_info(),
+            "names are not DWARF; the CLI has to be able to tell the two apart"
+        );
+
+        let stack = mapper.resolve(3);
+        assert_eq!(stack.len(), 1, "`name` never yields an inline stack");
+        assert_eq!(stack[0].function_name, "caller_of_heavy");
+        assert_eq!(stack[0].file_path, None);
+        assert_eq!(
+            stack[0].line_number, None,
+            "18 names for a code section is not a line table"
+        );
+    }
+
+    #[test]
+    fn every_defined_function_answers_with_its_name_in_code_section_order() {
+        // The table is keyed by function index, so the ordering claim is really about the bodies:
+        // these three names must line up with the three ranges #153 measured, not merely exist.
+        let mapper = SourceMapper::new(NO_DEBUG_PROBE).expect("the stripped fixture");
+
+        assert_eq!(
+            named_bodies(&mapper),
+            [
+                "caller_of_heavy".to_string(),
+                "memory_heavy_loop".to_string(),
+                "compute_heavy_loop".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn dwarf_and_names_agree_on_the_function_that_owns_every_address() {
+        // The strongest check available on these two fixtures, and it is cross-source: the names
+        // come from the `name` section's index table and the outermost DWARF frame from gimli's
+        // line tables, read out of two binaries built separately. They can only agree if the
+        // import offset, the body framing and the index alignment are all right. Sweeping every
+        // address rather than three bodies also catches a name applied where DWARF has none.
+        let mapped = SourceMapper::new(DWARF_PROBE).expect("the DWARF fixture");
+        let named = SourceMapper::new(NO_DEBUG_PROBE).expect("the stripped fixture");
+
+        assert_eq!(
+            mapped.code_map().map(CodeMap::bodies),
+            named.code_map().map(CodeMap::bodies),
+            "the two fixtures differ only in debug info, so their address spaces must match"
+        );
+
+        for address in 0..166 {
+            let owner = mapped
+                .resolve(address)
+                .last()
+                .map(|frame| frame.function_name.clone());
+            let name = named
+                .resolve_from_name_section(address)
+                .first()
+                .map(|frame| frame.function_name.clone());
 
             assert_eq!(
-                collapse_closures(&name),
-                name,
-                "address {address} named {name:?} was rewritten"
+                name, owner,
+                "address {address} names a different function per source"
             );
         }
     }
 
     #[test]
-    fn resolution_covers_most_of_the_code_section() {
-        // Not "DWARF is present" but "DWARF maps an executed address": the fixture's code section
-        // is 165 bytes, and one address per byte is swept. 160 of those 166 resolve; the rest are
-        // the two-byte gaps between functions and the address past the end.
+    fn the_names_fallback_is_coarser_at_an_inlined_call_site() {
+        // DWARF answers `14` with two frames and `name` cannot see the inline at all: it names the
+        // function that owns the address. The same function either way, which is what makes the
+        // precedence DWARF-then-names a fallback rather than a conflict.
+        let mapped = SourceMapper::new(DWARF_PROBE).expect("the DWARF fixture");
+        let named = SourceMapper::new(NO_DEBUG_PROBE).expect("the stripped fixture");
+
+        assert_eq!(mapped.resolve(14).len(), 2);
+        assert_eq!(named.resolve(14).len(), 1);
+        assert_eq!(
+            named.resolve(14)[0].function_name,
+            mapped.resolve(14).last().unwrap().function_name
+        );
+    }
+
+    #[test]
+    fn dwarf_wins_where_both_are_available() {
+        // A DWARF-bearing binary also has a `name` section, and `resolve` must not degrade to it.
+        // The assertion is about location: a name-only frame is the fallback's shape, and getting
+        // one from `resolve` here would mean the mapper picked the coarser source.
+        let mapper = SourceMapper::new(DWARF_PROBE).expect("the DWARF fixture");
+
+        assert_eq!(mapper.resolve(3).len(), 1);
+        assert!(
+            mapper.resolve(3)[0].file_path.is_some(),
+            "DWARF answers this address with a file, so `name` is not consulted"
+        );
+        assert_eq!(
+            mapper.resolve_from_name_section(3)[0].function_name,
+            mapper.resolve(3)[0].function_name,
+            "both sources name the same function; only one of them has a line"
+        );
+        assert_eq!(mapper.resolve_from_name_section(3)[0].file_path, None);
+
+        // And a mapper built with neither source names nothing, as it always has.
+        assert!(
+            SourceMapper::unmapped()
+                .resolve_from_name_section(3)
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_names_index_counts_imports_before_the_defined_functions() {
+        // #141 measured 18 entries for a contract that imports 4 functions and defines 14, so a
+        // table read as if it started at the first defined function would name every function by
+        // the wrong one. Two imports here, three bodies, and names starting at index 2.
+        let bytes = raw_module(&[
+            (IMPORT_SECTION, imports(2)),
+            (
+                0,
+                custom(
+                    NAME_SECTION,
+                    &function_names(&[
+                        (0, "host_a"),
+                        (1, "host_b"),
+                        (2, "alpha"),
+                        (3, "beta"),
+                        (4, "gamma"),
+                    ]),
+                ),
+            ),
+            (CODE_SECTION, code_bodies(3)),
+        ]);
+
+        let mapper = SourceMapper::new(&bytes).expect("names are enough to load");
+
+        assert_eq!(
+            named_bodies(&mapper),
+            ["alpha".to_string(), "beta".to_string(), "gamma".to_string()],
+            "the two import names shift the table by exactly two"
+        );
+    }
+
+    #[test]
+    fn an_unreadable_import_section_switches_the_names_off() {
+        // A module whose import list does not parse has an unknown offset, and an offset guessed at
+        // zero would attach the wrong name to every function. No fallback is the honest answer, and
+        // it is still the error that tells the user what their binary holds.
+        let bytes = raw_module(&[
+            (IMPORT_SECTION, vec![0x02, 0xff]),
+            (
+                0,
+                custom(NAME_SECTION, &function_names(&[(2, "alpha"), (3, "beta")])),
+            ),
+            (CODE_SECTION, code_bodies(2)),
+        ]);
+
+        let error = SourceMapper::new(&bytes)
+            .err()
+            .expect("an unalignable name table must not be used");
+
+        assert!(matches!(error, SourceMapError::MissingDebugInfo { .. }));
+    }
+
+    #[test]
+    fn a_name_section_that_names_nothing_in_the_code_section_is_not_a_fallback() {
+        // Kind 1 present, records well-formed, and not one of them names a function this module
+        // defines. Loading that would let a whole run finish unnamed with nothing to warn about.
+        let beyond = raw_module(&[
+            (
+                0,
+                custom(NAME_SECTION, &function_names(&[(7, "not_in_this_module")])),
+            ),
+            (CODE_SECTION, code_bodies(2)),
+        ]);
+        // Only the module-name subsection (kind 0), which is `dwarf_probe.wasm`, not a function.
+        let module_name_only = module(&[("name", &[0, 4, b'd', b'w', b'p', b'f'])]);
+
+        for bytes in [&beyond, &module_name_only] {
+            assert!(
+                matches!(
+                    SourceMapper::new(bytes).err(),
+                    Some(SourceMapError::MissingDebugInfo { .. })
+                ),
+                "no name for a defined function means no fallback: {:?}",
+                String::from_utf8_lossy(bytes)
+            );
+        }
+    }
+
+    #[test]
+    fn an_absurd_names_count_never_becomes_a_capacity() {
+        // The subsection declares 2^32 function names and then stops. The walk is bounded by the
+        // bytes, so this fails on the first missing record instead of allocating a table for the
+        // claim — `AGENTS.md`'s OOM rule applied to reading a binary, as #153 does for the code
+        // section.
+        let mut body = uleb(4_294_967_296);
+        body.extend(uleb(0));
+        body.extend(uleb(2));
+        body.extend(b"ok");
+        let mut payload = vec![1];
+        payload.extend(uleb(body.len() as u64));
+        payload.extend(body);
+
+        let bytes = module(&[("name", &payload)]);
+
+        assert!(matches!(
+            SourceMapper::new(&bytes).err(),
+            Some(SourceMapError::MissingDebugInfo { .. })
+        ));
+    }
+
+    #[test]
+    fn a_names_symbol_arrives_rendered_the_way_dwarf_names_arrive() {
+        // The section stores raw symbols, so the fallback runs the same pipeline #148 and #155 put
+        // behind DWARF names. Both inputs here are measured: the v0 symbol is what the committed
+        // fixture's DWARF carries at address 14, and a `#[no_mangle] extern "C"` name is what the
+        // fixture's own functions are stored as.
+        assert_eq!(
+            demangle_symbol("_RNvMs7_NtCsknUcikIyyBm_4core3numy12wrapping_add").as_deref(),
+            Some("<u64>::wrapping_add")
+        );
+        assert_eq!(
+            demangle_symbol("caller_of_heavy").as_deref(),
+            Some("caller_of_heavy")
+        );
+        assert_eq!(
+            demangle_symbol("closure_probe::outer::{closure#0}").as_deref(),
+            Some("closure_probe::outer::[closure#0]"),
+            "the closure rewrite is part of every frame name, from either source"
+        );
+        assert_eq!(demangle_symbol(""), None, "an empty name keys nothing");
+    }
+
+    // #158's cache is invisible to answers and visible to cost, so these tests are about what a
+    // second lookup returns, which mapper it returns it from, and how much a trace may make it hold.
+
+    #[test]
+    fn a_resolved_address_is_remembered_and_a_name_only_lookup_is_not() {
+        // The entry-count assertions are the only evidence that `resolve` has a cache at all: every
+        // other test here would pass with the map deleted.
+        let mapped = SourceMapper::new(DWARF_PROBE).expect("the fixture carries DWARF");
+        assert!(
+            mapped.cache.borrow().is_empty(),
+            "constructing must not pre-resolve the module"
+        );
+
+        mapped.resolve(3);
+        assert_eq!(
+            mapped.cache.borrow().len(),
+            1,
+            "the lookup was not remembered"
+        );
+        mapped.resolve(3);
+        assert_eq!(
+            mapped.cache.borrow().len(),
+            1,
+            "a repeat must not add a second entry for the same address"
+        );
+
+        // #158's measurement says the fallback stays uncached: a `name`-only lookup costs 59 ns and
+        // a cache hit costs 103 ns, so remembering it would make the degraded path slower.
+        let named = SourceMapper::new(NO_DEBUG_PROBE).expect("the stripped fixture");
+        named.resolve(3);
+        assert!(
+            named.cache.borrow().is_empty(),
+            "the `name` path resolves by body range, not by line program, and must not be cached"
+        );
+    }
+
+    #[test]
+    fn a_repeated_address_answers_with_the_stack_it_first_returned() {
         let mapper = SourceMapper::new(DWARF_PROBE).expect("the fixture carries DWARF");
 
-        let frames: Vec<SourceFrame> = (0..166usize).filter_map(|pc| mapper.resolve(pc)).collect();
+        for pc in [2usize, 3, 14, 101, 158] {
+            let first = mapper.resolve(pc);
+            assert_eq!(first, mapper.resolve(pc), "cached at {pc}");
+        }
+
+        // The inlined call site is the case worth caching: two frames to rebuild, and the address
+        // #156 measured as the most expensive in the fixture.
+        let stack = mapper.resolve(14);
+        assert_eq!(stack.len(), 2);
+        assert_eq!(
+            vec!["<u64>::wrapping_add", "caller_of_heavy"],
+            stack
+                .iter()
+                .map(|frame| frame.function_name.as_str())
+                .collect::<Vec<_>>(),
+            "the cached stack must keep the innermost-first order"
+        );
+        assert_eq!(stack, mapper.resolve(14));
+    }
+
+    #[test]
+    fn the_cache_cannot_change_an_answer_across_a_whole_trace() {
+        // Sweeping the address space twice on one mapper has to give what a mapper nobody asked
+        // before gives. A wrong cache is a wrong flamegraph, and this is the cheap way to say it
+        // cannot happen.
+        let warm = SourceMapper::new(DWARF_PROBE).expect("the fixture carries DWARF");
+        let cold = SourceMapper::new(DWARF_PROBE).expect("the fixture carries DWARF");
+
+        let once: Vec<Vec<SourceFrame>> = (0..166usize).map(|pc| warm.resolve(pc)).collect();
+        let twice: Vec<Vec<SourceFrame>> = (0..166usize).map(|pc| warm.resolve(pc)).collect();
+        let fresh: Vec<Vec<SourceFrame>> = (0..166usize).map(|pc| cold.resolve(pc)).collect();
+
+        assert_eq!(once, twice, "a second sweep differs from the first");
+        assert_eq!(once, fresh, "a cached answer differs from a cold one");
+    }
+
+    #[test]
+    fn one_mappers_answers_never_reach_another() {
+        // Nothing here is keyed by which binary a mapper read, so a shared cache would attribute one
+        // module's addresses to another module's symbols. Each mapper owns its map.
+        let mapped = SourceMapper::new(DWARF_PROBE).expect("the fixture carries DWARF");
+        let unmapped = SourceMapper::unmapped();
+
+        assert!(!mapped.resolve(3).is_empty());
+        assert!(
+            unmapped.resolve(3).is_empty(),
+            "an unmapped mapper answered from another mapper's cache"
+        );
+        assert!(
+            mapped.resolve(usize::MAX).is_empty(),
+            "an out-of-range address is not a frame, cached or not"
+        );
+    }
+
+    #[test]
+    fn a_trace_that_never_repeats_cannot_grow_the_cache_past_its_bound() {
+        // Distinct addresses are the case a cache cannot plan for, so the bound holds whatever
+        // arrives: three times the limit, none of them a repeat. These are addresses past the code
+        // section, which is what a corrupt or non-wasm offset looks like.
+        let mapper = SourceMapper::new(DWARF_PROBE).expect("the fixture carries DWARF");
+
+        for pc in 0..(3 * RESOLUTION_CACHE_LIMIT) {
+            mapper.resolve(1_000 + pc);
+        }
+
+        let held = mapper.cache.borrow().len();
+        assert!(
+            held <= RESOLUTION_CACHE_LIMIT,
+            "the cache holds {held} entries for a limit of {RESOLUTION_CACHE_LIMIT}"
+        );
+        // Overflow costs recomputation, never correctness.
+        assert_eq!(mapper.resolve(14).len(), 2);
+    }
+
+    #[test]
+    fn resolution_covers_most_of_the_code_section() {
+        // Not "DWARF is present" but "DWARF maps an executed address": the fixture's code section
+        // is 165 bytes, and one address per byte is swept. 160 of those 166 resolve — and because
+        // 10 of them are inlined call sites, the stack they hand back is 170 frames long. The
+        // sweep is flat rather than one-frame-per-address so the names below include the inlined
+        // half of every stack, which is where a mangled symbol would actually leak through.
+        let mapper = SourceMapper::new(DWARF_PROBE).expect("the fixture carries DWARF");
+
+        let frames: Vec<SourceFrame> = (0..166usize).flat_map(|pc| mapper.resolve(pc)).collect();
         let names: Vec<&str> = frames
             .iter()
             .map(|frame| frame.function_name.as_str())
@@ -1225,7 +2191,7 @@ mod tests {
             usize::MAX - 1,
             usize::MAX,
         ] {
-            assert_eq!(mapper.resolve(pc), None, "pc {pc} should not resolve");
+            assert!(mapper.resolve(pc).is_empty(), "pc {pc} should not resolve");
         }
     }
     #[test]
@@ -1235,7 +2201,7 @@ mod tests {
         assert!(!mapper.has_debug_info());
         for pc in [0usize, 1, 64, 4096, usize::MAX] {
             assert!(
-                mapper.resolve(pc).is_none(),
+                mapper.resolve(pc).is_empty(),
                 "pc {pc} resolved to a frame from a mapper with no symbols"
             );
         }
@@ -1275,7 +2241,7 @@ mod tests {
         // being self-consistent: `bodies` comes from the wasm framing and `resolve` comes from
         // DWARF, so they agree only if the translation base is exactly right. Move the base by one
         // byte and these addresses land on a size prefix or outside the section, and `resolve`
-        // answers `None` for all three.
+        // answers an empty stack for all three.
         let mapper = SourceMapper::new(DWARF_PROBE).expect("the fixture carries DWARF");
         let map = mapper.code_map().expect("the fixture has a code section");
         let base = 111; // the fixture's code section payload, measured from its section table
@@ -1284,8 +2250,9 @@ mod tests {
 
         let names = ["caller_of_heavy", "memory_heavy_loop", "compute_heavy_loop"];
         for (index, body) in map.bodies().iter().enumerate() {
-            let frame = mapper
-                .resolve_file_offset(base + body.start)
+            let stack = mapper.resolve_file_offset(base + body.start);
+            let frame = stack
+                .first()
                 .unwrap_or_else(|| panic!("offset {} is a function prologue", base + body.start));
             assert_eq!(frame.function_name, names[index]);
             assert_eq!(map.function_at(body.start), Some(index));
@@ -1326,13 +2293,13 @@ mod tests {
         // someone debugging the line table instead of their arithmetic.
         for offset in [0usize, 8, 10, 110, 276, 279, 1_000, 1_000_000, usize::MAX] {
             assert!(
-                mapper.resolve_file_offset(offset).is_none(),
+                mapper.resolve_file_offset(offset).is_empty(),
                 "file offset {offset} is outside the code section"
             );
         }
 
         // And the boundary the other way: the first offset inside it does resolve.
-        assert!(mapper.resolve_file_offset(113).is_some());
+        assert!(!mapper.resolve_file_offset(113).is_empty());
     }
 
     #[test]
@@ -1367,6 +2334,6 @@ mod tests {
         let mapper = SourceMapper::unmapped();
 
         assert!(mapper.code_map().is_none());
-        assert!(mapper.resolve_file_offset(113).is_none());
+        assert!(mapper.resolve_file_offset(113).is_empty());
     }
 }

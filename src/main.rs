@@ -35,8 +35,6 @@ use std::path::PathBuf;
 use tracing::warn;
 use wasmi::Val;
 
-/// Soroban Cost Profiler
-
 fn parse_positive_u32(s: &str) -> Result<u32, String> {
     let val: u32 = s.parse().map_err(|_| format!("`{}` is not a valid number", s))?;
     if val == 0 {
@@ -46,9 +44,9 @@ fn parse_positive_u32(s: &str) -> Result<u32, String> {
     }
 }
 
+/// Soroban Cost Profiler
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
-
 pub struct Cli {
     /// Path to the compiled WASM contract
     #[arg(short, long)]
@@ -59,8 +57,8 @@ pub struct Cli {
     pub output: PathBuf,
 
     /// Target function to invoke
-    #[arg(long, default_value = "")]
-    pub r#fn: String,
+    #[arg(long = "fn", default_value = "")]
+    pub fn_name: String,
 
     /// Sampling rate
     #[arg(long, default_value_t = 1000, value_parser = parse_positive_u32)]
@@ -142,10 +140,10 @@ fn profile(cli: &Cli) {
         }
     };
 
-    let func_name = if cli.r#fn.is_empty() {
+    let func_name = if cli.fn_name.is_empty() {
         "test"
     } else {
-        &cli.r#fn
+        &cli.fn_name
     };
 
     let func = instance.get_func(&store, func_name).unwrap_or_else(|| {
@@ -189,7 +187,7 @@ fn profile(cli: &Cli) {
 /// Print the MVP notice and run the harness.
 fn main() {
     let cli = Cli::parse();
-    tracing::error!("soroban-cost-profiler MVP (Not yet implemented)");
+    println!("soroban-cost-profiler MVP (Not yet implemented)");
     profile(&cli);
 }
 
@@ -209,7 +207,7 @@ mod tests {
                 "fixtures/dwarf_probe/dwarf_probe.wasm",
             ),
             output: output_path.clone(),
-            r#fn: String::from("caller_of_heavy"),
+            fn_name: String::from("caller_of_heavy"),
             metric: Metric::Cpu,
             sample_rate: 1000,
         };
