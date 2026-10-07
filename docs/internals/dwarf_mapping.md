@@ -237,6 +237,60 @@ line tables are independent readers of one binary. Sweeping all 166 code-section
 outermost DWARF frame and the name-section entry name the same function at every one, including the
 ten inlined call sites where DWARF answers with two frames and `name` answers with one.
 
+## Repeating a lookup (#158)
+
+`SourceMapper::resolve` remembers what it has already answered for this mapper, in a map bounded by
+`RESOLUTION_CACHE_LIMIT` (4,096 addresses). What it saves is not free: `find_frames` has to locate
+the line program covering the address, run it to that instruction, and rebuild each frame — the walk
+dominates, not `gimli`'s indexing.
+
+Measured by running one probe twice, against the #157 build and against this one, in the profile the
+crate actually ships (`opt-level = "z"`, one machine, three runs each):
+
+| case | uncached | cached | change |
+| --- | --- | --- | --- |
+| repeat one single-frame address (`pc 3`) | ~290–470 ns | ~105 ns | 3–4× faster |
+| repeat an inlined call site (`pc 14`, `101` — two frames) | ~1.07 µs | ~160 ns | 7× faster |
+| second sweep of the fixture's 166 addresses | ~360 ns each | ~110 ns each | 3× faster |
+| sweep of the real 622 KB build's 488 addresses | ~570 ns each | ~180 ns each | 3× faster |
+| **first** lookup of an address | ~480 ns each | ~660 ns each | **1.4× slower** |
+
+The last row is the cost, and it is real: a miss now inserts, and a hit clones, so a run that never
+repeats an address is slower than it used to be. Break-even is about one repeat, and a trace repeats
+by construction — one event per call boundary, a loop is the same handful of addresses over and over,
+and Phase 5's sampling turns each boundary into many.
+
+Three decisions fall out of the measurements rather than from taste:
+
+* **The `name`-section fallback is deliberately not cached.** It costs 59 ns to compute — a binary
+  search over `CodeMap::bodies` plus one name clone — and answering from a map costs 103 ns, so
+  caching the degraded path would make the degraded path slower. `resolve` returns through
+  `resolve_from_name_section` before it touches the map, which is why that path is also the only one
+  whose entry count stays at zero.
+* **An address that resolves to nothing *is* stored.** That is the binary #141 measured at "0 of 270
+  addresses resolve": a `wasm-opt`-without-`-g` artifact whose surviving line tables describe
+  pre-optimization code, so every lookup walks a full program to answer "nothing", and it does so once
+  per event. Caching the silence is the point of storing empties. (Today's engine reports `pc = 0` for
+  every event, which costs ~18 ns uncached and ~28 ns cached — a wash, and the one case the cache
+  cannot help.)
+* **Overflow clears rather than evicting least-recently-used.** Clearing costs recomputation and never
+  correctness, which is all a cache is allowed to cost; LRU bookkeeping or a new dependency would buy
+  hit rate only for a workload that cycles through more distinct addresses than the cap, and such a
+  trace has no locality for any policy to exploit.
+
+The signature question #158 raised is settled the same way: `resolve` stays `&self` and the map lives
+in a `RefCell`, because `ProfileAggregator::aggregate` takes `&SourceMapper`. Turning every caller's
+borrow into a mutable one to save a line-program walk trades the wrong way, and the pipeline is
+single-threaded, so a borrow flag is all the synchronization the map needs.
+
+A cache you cannot observe is a cache you can delete, so the tests assert entry counts as well as
+answers: `a_resolved_address_is_remembered_and_a_name_only_lookup_is_not` proves the map exists, stays
+one-entry-per-address and skips the uncached path;
+`the_cache_cannot_change_an_answer_across_a_whole_trace` sweeps all 166 addresses twice on one mapper
+and once on a cold one and requires byte-for-byte agreement;
+`a_trace_that_never_repeats_cannot_grow_the_cache_past_its_bound` feeds three times the limit and
+checks both the bound and that the answers outlive the clear.
+
 ## Producing a binary this stage can map
 
 ```toml

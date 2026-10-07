@@ -1,5 +1,7 @@
 use crate::models::SourceFrame;
 use addr2line::FunctionName;
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::ops::Range;
 use std::rc::Rc;
 
@@ -205,7 +207,39 @@ pub struct SourceMapper {
     /// [`SourceMapper::new`] report [`SourceMapError::MissingDebugInfo`] rather than load a binary
     /// that can say nothing about itself.
     names: Option<NameSection>,
+    /// Addresses whose inline stack this mapper has already computed (#158).
+    ///
+    /// A trace revisits addresses: the tracer records one event per call boundary and per sample,
+    /// and a loop is the same handful of addresses over and over. Resolving one costs 250 ns for a
+    /// single frame and 1.05 µs at an inlined call site (measured on the committed fixture's
+    /// `opt-level = "z"` release build, where walking the line program dominates), so a run that
+    /// attributes thousands of events spends most of Stage 2 recomputing answers it just gave.
+    ///
+    /// A `RefCell` rather than `&mut self`, because [`ProfileAggregator::aggregate`] takes the mapper
+    /// by `&`: making every caller hold a mutable mapper to save a line-program walk is the worse
+    /// trade, and the pipeline is single-threaded, so the borrow check is all the synchronization
+    /// this needs.
+    ///
+    /// Bounded by [`RESOLUTION_CACHE_LIMIT`], and an address that resolves to nothing is stored too:
+    /// "nothing" is the most expensive answer to recompute on the stale-DWARF binary #162 warns about,
+    /// whose tables have to be walked to find out they describe no live code.
+    cache: RefCell<HashMap<usize, Vec<SourceFrame>>>,
 }
+
+/// How many resolved addresses [`SourceMapper::cache`] holds before it starts over (#158).
+///
+/// The bound exists because a cache keyed by program counter is only as small as the trace that
+/// fills it, and `AGENTS.md`'s OOM rule does not stop at the event buffer. The number is a working
+/// set, not a guess: a run attributes one address per call boundary and per sample, and the address
+/// space those can name is the binary's code section — 166 addresses for the committed fixture, 489
+/// for the real 622 KB build #141 measured — so 4,096 holds every address either of them can present
+/// twenty times over, and the frames it retains are worth a few hundred KB at that cap.
+///
+/// Overflow clears rather than evicts least-recently-used. Clearing costs recomputation and never
+/// correctness, which is all a cache is allowed to cost; an LRU's bookkeeping (or a new dependency)
+/// only pays for a workload that cycles through more distinct addresses than the cap, and a trace
+/// that does is one whose answers are too scattered for any reuse policy to help.
+const RESOLUTION_CACHE_LIMIT: usize = 4096;
 
 impl SourceMapper {
     /// Build a mapper for one already-loaded WASM binary, reading its DWARF or, failing that, its
@@ -274,6 +308,7 @@ impl SourceMapper {
                 context: None,
                 code: sections.code,
                 names: Some(names),
+                cache: RefCell::new(HashMap::new()),
             });
         }
 
@@ -287,6 +322,7 @@ impl SourceMapper {
             context: Some(context),
             code: sections.code,
             names,
+            cache: RefCell::new(HashMap::new()),
         })
     }
 
@@ -301,6 +337,7 @@ impl SourceMapper {
             context: None,
             code: None,
             names: None,
+            cache: RefCell::new(HashMap::new()),
         }
     }
 
@@ -339,8 +376,10 @@ impl SourceMapper {
     /// through [`SourceMapper::resolve_from_name_section`] instead. The order is DWARF, then `name`,
     /// then the `wasm[pc]` the aggregator falls back to, and #163 is the write-up of why.
     ///
-    /// Takes `&self`, so one mapper can serve a whole trace, and #158's cache would make it
-    /// `&mut self` — a change to weigh against `aggregate` holding `&SourceMapper`. Allocating one
+    /// Takes `&self`, so one mapper can serve a whole trace, and repeats itself through an internal
+    /// address cache rather than through a `&mut self` signature #158 could have asked for —
+    /// `aggregate` holds the mapper by reference, and a cache that cost every caller a `&mut` would
+    /// be a worse trade than the walk it saves. Allocating one
     /// `Vec` per event sits inside `AGENTS.md`'s OOM rule for the same reason the rest of Stage 2
     /// does: the tracer emits one event per call boundary, not per instruction.
     ///
@@ -369,12 +408,35 @@ impl SourceMapper {
     /// ```
     pub fn resolve(&self, pc: usize) -> Vec<SourceFrame> {
         let Some(context) = self.context.as_ref() else {
-            // No DWARF means there is nothing to ask, but a `name` section can still say which
-            // function this address belongs to (#157). DWARF wins wherever it is loaded: `name`
-            // names a whole function, so it can only ever be the coarser answer.
+            // No DWARF means there is nothing to walk, and no cache either: #157's fallback finds a
+            // body by binary search over [`CodeMap::bodies`] and clones one name, measured at 61 ns —
+            // less than a hash lookup and a stack clone would cost. Caching it would make the
+            // degraded path slower, which is not what a cache is for.
             return self.resolve_from_name_section(pc);
         };
 
+        if let Some(stack) = self.cache.borrow().get(&pc) {
+            return stack.clone();
+        }
+
+        let stack = self.resolve_dwarf(context, pc);
+
+        let mut cache = self.cache.borrow_mut();
+        if cache.len() >= RESOLUTION_CACHE_LIMIT {
+            cache.clear();
+        }
+        cache.insert(pc, stack.clone());
+
+        stack
+    }
+
+    /// Ask DWARF for one address's inline stack, innermost frame first.
+    ///
+    /// [`SourceMapper::resolve`] is the public door and the one that remembers; this is the walk it
+    /// caches. Splitting them keeps the cache out of the semantics: everything #146–#156 pinned —
+    /// the range guards, `skip_all_loads`, a nameless frame ending only itself — lives here, and is
+    /// reached at most once per address per mapper.
+    fn resolve_dwarf(&self, context: &Context, pc: usize) -> Vec<SourceFrame> {
         // `addr2line` probes the half-open range `[address, address + 1)`, so `u64::MAX` overflows
         // inside that computation and panics a debug build. No code section is within orders of
         // magnitude of that, so an address this high is not an offset and gets the same answer as
@@ -1957,6 +2019,120 @@ mod tests {
             "the closure rewrite is part of every frame name, from either source"
         );
         assert_eq!(demangle_symbol(""), None, "an empty name keys nothing");
+    }
+
+    // #158's cache is invisible to answers and visible to cost, so these tests are about what a
+    // second lookup returns, which mapper it returns it from, and how much a trace may make it hold.
+
+    #[test]
+    fn a_resolved_address_is_remembered_and_a_name_only_lookup_is_not() {
+        // The entry-count assertions are the only evidence that `resolve` has a cache at all: every
+        // other test here would pass with the map deleted.
+        let mapped = SourceMapper::new(DWARF_PROBE).expect("the fixture carries DWARF");
+        assert!(
+            mapped.cache.borrow().is_empty(),
+            "constructing must not pre-resolve the module"
+        );
+
+        mapped.resolve(3);
+        assert_eq!(
+            mapped.cache.borrow().len(),
+            1,
+            "the lookup was not remembered"
+        );
+        mapped.resolve(3);
+        assert_eq!(
+            mapped.cache.borrow().len(),
+            1,
+            "a repeat must not add a second entry for the same address"
+        );
+
+        // #158's measurement says the fallback stays uncached: a `name`-only lookup costs 59 ns and
+        // a cache hit costs 103 ns, so remembering it would make the degraded path slower.
+        let named = SourceMapper::new(NO_DEBUG_PROBE).expect("the stripped fixture");
+        named.resolve(3);
+        assert!(
+            named.cache.borrow().is_empty(),
+            "the `name` path resolves by body range, not by line program, and must not be cached"
+        );
+    }
+
+    #[test]
+    fn a_repeated_address_answers_with_the_stack_it_first_returned() {
+        let mapper = SourceMapper::new(DWARF_PROBE).expect("the fixture carries DWARF");
+
+        for pc in [2usize, 3, 14, 101, 158] {
+            let first = mapper.resolve(pc);
+            assert_eq!(first, mapper.resolve(pc), "cached at {pc}");
+        }
+
+        // The inlined call site is the case worth caching: two frames to rebuild, and the address
+        // #156 measured as the most expensive in the fixture.
+        let stack = mapper.resolve(14);
+        assert_eq!(stack.len(), 2);
+        assert_eq!(
+            vec!["<u64>::wrapping_add", "caller_of_heavy"],
+            stack
+                .iter()
+                .map(|frame| frame.function_name.as_str())
+                .collect::<Vec<_>>(),
+            "the cached stack must keep the innermost-first order"
+        );
+        assert_eq!(stack, mapper.resolve(14));
+    }
+
+    #[test]
+    fn the_cache_cannot_change_an_answer_across_a_whole_trace() {
+        // Sweeping the address space twice on one mapper has to give what a mapper nobody asked
+        // before gives. A wrong cache is a wrong flamegraph, and this is the cheap way to say it
+        // cannot happen.
+        let warm = SourceMapper::new(DWARF_PROBE).expect("the fixture carries DWARF");
+        let cold = SourceMapper::new(DWARF_PROBE).expect("the fixture carries DWARF");
+
+        let once: Vec<Vec<SourceFrame>> = (0..166usize).map(|pc| warm.resolve(pc)).collect();
+        let twice: Vec<Vec<SourceFrame>> = (0..166usize).map(|pc| warm.resolve(pc)).collect();
+        let fresh: Vec<Vec<SourceFrame>> = (0..166usize).map(|pc| cold.resolve(pc)).collect();
+
+        assert_eq!(once, twice, "a second sweep differs from the first");
+        assert_eq!(once, fresh, "a cached answer differs from a cold one");
+    }
+
+    #[test]
+    fn one_mappers_answers_never_reach_another() {
+        // Nothing here is keyed by which binary a mapper read, so a shared cache would attribute one
+        // module's addresses to another module's symbols. Each mapper owns its map.
+        let mapped = SourceMapper::new(DWARF_PROBE).expect("the fixture carries DWARF");
+        let unmapped = SourceMapper::unmapped();
+
+        assert!(!mapped.resolve(3).is_empty());
+        assert!(
+            unmapped.resolve(3).is_empty(),
+            "an unmapped mapper answered from another mapper's cache"
+        );
+        assert!(
+            mapped.resolve(usize::MAX).is_empty(),
+            "an out-of-range address is not a frame, cached or not"
+        );
+    }
+
+    #[test]
+    fn a_trace_that_never_repeats_cannot_grow_the_cache_past_its_bound() {
+        // Distinct addresses are the case a cache cannot plan for, so the bound holds whatever
+        // arrives: three times the limit, none of them a repeat. These are addresses past the code
+        // section, which is what a corrupt or non-wasm offset looks like.
+        let mapper = SourceMapper::new(DWARF_PROBE).expect("the fixture carries DWARF");
+
+        for pc in 0..(3 * RESOLUTION_CACHE_LIMIT) {
+            mapper.resolve(1_000 + pc);
+        }
+
+        let held = mapper.cache.borrow().len();
+        assert!(
+            held <= RESOLUTION_CACHE_LIMIT,
+            "the cache holds {held} entries for a limit of {RESOLUTION_CACHE_LIMIT}"
+        );
+        // Overflow costs recomputation, never correctness.
+        assert_eq!(mapper.resolve(14).len(), 2);
     }
 
     #[test]
