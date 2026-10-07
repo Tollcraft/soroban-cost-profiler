@@ -189,9 +189,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let output_path = temp_dir.path().join("profile.folded");
         let cli = Cli {
-            wasm: PathBuf::from(
-                "fixtures/dwarf_probe/dwarf_probe.wasm",
-            ),
+            wasm: PathBuf::from("fixtures/dwarf_probe/dwarf_probe.wasm"),
             output: output_path.clone(),
             fn_name: String::from("caller_of_heavy"),
             sample_rate: 1000,
