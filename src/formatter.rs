@@ -22,14 +22,13 @@ pub enum DeltaScale {
 }
 
 impl OutputFormatter {
-    /// Formats the tree into a collapsed stack efficiently.
-
+    /// Returns the top `n` most expensive functions by the specified metric.
     pub fn top_functions(root: &CallStackNode, metric: &Metric, n: usize) -> Vec<(String, u64)> {
         let mut costs = std::collections::HashMap::new();
         Self::traverse_costs(root, metric, &mut costs);
 
         let mut ranked: Vec<_> = costs.into_iter().collect();
-        ranked.sort_by(|a, b| b.1.cmp(&a.1));
+        ranked.sort_by_key(|a| std::cmp::Reverse(a.1));
         ranked.truncate(n);
         ranked
     }
