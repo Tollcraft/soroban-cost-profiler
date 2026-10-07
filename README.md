@@ -55,8 +55,11 @@ cargo build --profile profiling --target wasm32-unknown-unknown
 
 That writes `profile.folded` in the directory you ran it from and prints a summary of the run — the five
 costliest functions, when the trace carries any cost. Open the file at
-[speedscope.app](https://www.speedscope.app) (`File → Open`), or hand it to
+[speedscope.app](https://www.speedscope.app) by dragging it onto the window, or hand it to
 `flamegraph.pl` for an SVG of your own — this tool deliberately writes text and no pictures.
+
+Want the whole path, with the output of each step shown? [docs/tutorial.md](docs/tutorial.md) walks from
+`cargo build --release` to a flamegraph in eight steps, on a contract you can compile yourself.
 
 ## Usage
 
