@@ -43,7 +43,8 @@ pub struct Cli {
     pub output: PathBuf,
 
     /// Target function to invoke
-    #[arg(long, default_value = "")]
+    
+    #[arg(long = "fn", default_value = "")]
     pub fn_name: String,
 
     /// Sampling rate
