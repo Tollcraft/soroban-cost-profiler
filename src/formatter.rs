@@ -21,6 +21,37 @@ pub enum DeltaScale {
     Neutral,
 }
 
+/// One function's exclusive cost in two runs, as whoever asked for a comparison reads it (#190).
+///
+/// Per *function* and not per stack, because the question is "did my change make this cheaper",
+/// which a stack-level diff answers only if the reader sums the lines themselves. The two raw
+/// counts travel with it rather than just the difference: `+51489` on its own cannot say whether
+/// that is noise on a 50-million-instruction function or the whole of a small one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FunctionDelta {
+    /// The frame name as both artifacts spell it.
+    pub name: String,
+    /// Its exclusive cost in the baseline, `0` when the function is new since then.
+    pub baseline: u64,
+    /// Its exclusive cost in the current run, `0` when it no longer appears.
+    pub current: u64,
+}
+
+impl FunctionDelta {
+    /// Signed change, `current - baseline`, so a negative number is the improvement the user hopes
+    /// for. Widened to `i128` because the difference of two `u64` costs is not representable as an
+    /// `i64` — saturating would hide a change that large rather than report it.
+    pub fn delta(&self) -> i128 {
+        self.current as i128 - self.baseline as i128
+    }
+
+    /// Which side of the red/blue split this function falls on, sharing [`DeltaScale`]'s rule with
+    /// the differential artifact.
+    pub fn scale(&self) -> DeltaScale {
+        OutputFormatter::delta_scale(self.baseline, self.current)
+    }
+}
+
 /// The metric's name as it appears in the summary header and in `--metric`.
 fn metric_name(metric: &Metric) -> &'static str {
     match metric {
@@ -246,6 +277,172 @@ impl OutputFormatter {
         } else {
             DeltaScale::Neutral
         }
+    }
+
+    /// Sum a parsed artifact's costs onto the function each stack *ends* in.
+    ///
+    /// The last frame of a folded path is the frame that was executing when the cost landed, and
+    /// that is exactly what [`to_collapsed_stack`](Self::to_collapsed_stack) writes as the node's
+    /// own count — so pooling by leaf rebuilds exclusive cost from the file alone, without the
+    /// tree. Inclusive cost would make the comparison useless: the entry function is the parent of
+    /// every change in it, so it would top the list whatever the user optimized.
+    fn exclusive_by_function(stacks: &BTreeMap<String, u64>) -> BTreeMap<String, u64> {
+        let mut by_function = BTreeMap::new();
+        for (path, cost) in stacks {
+            // `rsplit` always yields at least one piece, so an empty path pools under "" rather
+            // than vanishing — `parse_folded` accepted it, and a cost with no name is a fact the
+            // reader should see, not one to drop.
+            let function = path.rsplit(';').next().unwrap_or(path);
+            let total = by_function.entry(function.to_string()).or_insert(0u64);
+            *total = total.saturating_add(*cost);
+        }
+        by_function
+    }
+
+    /// How each function's cost moved between two `.folded` artifacts, biggest move first (#190).
+    ///
+    /// Both sides are parsed with [`parse_folded`], so the input is the tool's own output format
+    /// and a malformed file is reported with its line number rather than compared wrongly. A
+    /// function on only one side is kept with `0` on the missing side — the same rule
+    /// [`to_differential_folded`] applies — because "this function disappeared" is one of the
+    /// answers an optimization report exists to give.
+    ///
+    /// Ranking is by the *size* of the change, not its direction: the two things worth reading
+    /// first are a large regression and a large win, and sorting by signed delta would bury the
+    /// regression list under the improvements. Ties break on the name, so two runs over the same
+    /// pair of files print the same table.
+    pub fn function_deltas(baseline: &str, current: &str) -> Result<Vec<FunctionDelta>, String> {
+        // Which side broke is part of the error. `parse_folded` counts lines from the start of the
+        // string it is handed, so a bare "line 3" from a two-file comparison names a line in an
+        // unknown file, and the reader cannot even open the right one to fix it.
+        let baseline =
+            Self::parse_folded(baseline).map_err(|error| format!("baseline: {error}"))?;
+        let current = Self::parse_folded(current).map_err(|error| format!("current: {error}"))?;
+        let baseline = Self::exclusive_by_function(&baseline);
+        let current = Self::exclusive_by_function(&current);
+
+        let names: BTreeSet<&str> = baseline
+            .keys()
+            .map(String::as_str)
+            .chain(current.keys().map(String::as_str))
+            .collect();
+
+        let mut deltas: Vec<FunctionDelta> = names
+            .into_iter()
+            .map(|name| FunctionDelta {
+                name: name.to_string(),
+                baseline: baseline.get(name).copied().unwrap_or(0),
+                current: current.get(name).copied().unwrap_or(0),
+            })
+            .collect();
+
+        deltas.sort_by(|a, b| {
+            b.delta()
+                .abs()
+                .cmp(&a.delta().abs())
+                .then_with(|| a.name.cmp(&b.name))
+        });
+        Ok(deltas)
+    }
+
+    /// [`function_deltas`] as the table the terminal shows: one row per function whose cost moved.
+    ///
+    /// Both counts and the delta are printed rather than the delta alone, because a delta is only
+    /// readable against the numbers that made it. Functions that did not move are left out — a
+    /// comparison the user asked for because something changed should not spend its first screenful
+    /// confirming that most things did not — but how many were left out is said, so an empty table
+    /// cannot be mistaken for a broken one. `color` stays a parameter rather than a stream probe,
+    /// exactly as in [`to_top_summary`](Self::to_top_summary): a redirected report is plain text and
+    /// this function remains testable.
+    ///
+    /// [`function_deltas`]: OutputFormatter::function_deltas
+    pub fn to_compare_report(deltas: &[FunctionDelta], color: bool) -> String {
+        let paint = |code: &str, text: String| {
+            if color {
+                format!("\x1b[{code}m{text}\x1b[0m")
+            } else {
+                text
+            }
+        };
+
+        let changed: Vec<&FunctionDelta> =
+            deltas.iter().filter(|delta| delta.delta() != 0).collect();
+        let total = FunctionDelta {
+            name: String::from("total"),
+            baseline: deltas.iter().map(|delta| delta.baseline).sum(),
+            current: deltas.iter().map(|delta| delta.current).sum(),
+        };
+
+        let name_width = changed
+            .iter()
+            .map(|delta| delta.name.chars().count())
+            .chain([total.name.chars().count()])
+            .max()
+            .unwrap_or(0);
+        let cost_width = deltas
+            .iter()
+            .flat_map(|delta| [delta.baseline, delta.current])
+            .map(|cost| cost.to_string().len())
+            .max()
+            .unwrap_or(0);
+        // Each delta is rendered as text first, because "right-align and always show the sign" has
+        // no single format spec: in `+>width$` the `+` is read as the *fill* character, not the sign.
+        let signed = |delta: &FunctionDelta| format!("{:+}", delta.delta());
+        let delta_width = deltas
+            .iter()
+            .map(|delta| signed(delta).chars().count())
+            .max()
+            .unwrap_or(0);
+
+        let mut output = String::new();
+        let _ = writeln!(
+            output,
+            "{}",
+            paint(
+                "1",
+                String::from("Cost comparison, baseline → current (exclusive cost per function):")
+            )
+        );
+        for delta in &changed {
+            let code = match delta.scale() {
+                DeltaScale::Regression => "31",
+                DeltaScale::Improvement => "32",
+                // Unreachable: `changed` holds only rows whose two counts differ.
+                DeltaScale::Neutral => "",
+            };
+            let _ = writeln!(
+                output,
+                " {:<name_width$}  {:>cost_width$}  {:>cost_width$}  {:>delta_width$}",
+                delta.name,
+                delta.baseline,
+                delta.current,
+                paint(code, signed(delta)),
+            );
+        }
+        let _ = writeln!(
+            output,
+            " {:<name_width$}  {:>cost_width$}  {:>cost_width$}  {:>delta_width$}",
+            total.name,
+            total.baseline,
+            total.current,
+            signed(&total),
+        );
+
+        let unchanged = deltas.len() - changed.len();
+        if changed.is_empty() {
+            let _ = write!(
+                output,
+                "no function's cost changed between the two profiles ({unchanged} compared)"
+            );
+        } else {
+            let _ = write!(
+                output,
+                "{} of {} functions changed cost, {unchanged} unchanged",
+                changed.len(),
+                deltas.len()
+            );
+        }
+        output
     }
 }
 
@@ -575,6 +772,200 @@ mod tests {
             OutputFormatter::delta_scale(400, 900),
             DeltaScale::Regression,
             "a 500-unit cost increase should read red"
+        );
+    }
+
+    /// #190's comparison is only as honest as its pooling rule, so it is pinned on the file format
+    /// rather than on a tree: the last frame of a stack is the function that was running, and every
+    /// stack that ends in the same name adds to the same row.
+    #[test]
+    fn function_deltas_pool_each_stack_onto_the_function_that_ran() {
+        let baseline = "caller_of_heavy 900\ncaller_of_heavy;memory_heavy_loop 100\n";
+        let current = "caller_of_heavy 400\ncaller_of_heavy;memory_heavy_loop 350\n";
+
+        let deltas = OutputFormatter::function_deltas(baseline, current).unwrap();
+        let by_name: BTreeMap<&str, i128> = deltas
+            .iter()
+            .map(|delta| (delta.name.as_str(), delta.delta()))
+            .collect();
+
+        assert_eq!(
+            by_name.get("caller_of_heavy"),
+            Some(&-500),
+            "the outer frame's own count moved from 900 to 400: {deltas:?}"
+        );
+        assert_eq!(
+            by_name.get("memory_heavy_loop"),
+            Some(&250),
+            "the inner frame is charged its own 100 → 350, not the path above it"
+        );
+    }
+
+    #[test]
+    fn a_function_on_one_side_only_compares_against_zero() {
+        // The rule `to_differential_folded` already uses, so a function that appeared or vanished is
+        // a row in the report rather than an absence the reader has to go and diff by hand.
+        let deltas = OutputFormatter::function_deltas("gone 700\n", "fresh 300\ngone 0\n").unwrap();
+        let gone = deltas
+            .iter()
+            .find(|delta| delta.name == "gone")
+            .expect("`gone` is on both sides");
+        let fresh = deltas
+            .iter()
+            .find(|delta| delta.name == "fresh")
+            .expect("`fresh` is new");
+
+        assert_eq!((gone.baseline, gone.current, gone.delta()), (700, 0, -700));
+        assert_eq!(
+            (fresh.baseline, fresh.current, fresh.delta()),
+            (0, 300, 300)
+        );
+        assert_eq!(fresh.scale(), DeltaScale::Regression);
+        assert_eq!(gone.scale(), DeltaScale::Improvement);
+    }
+
+    #[test]
+    fn the_biggest_move_is_first_and_ties_break_on_the_name() {
+        let baseline = "small 10\nbig 10\nalpha 1000\nomega 1000\n";
+        let current = "small 20\nbig 1010\nalpha 10\nomega 10\n";
+
+        let names: Vec<String> = OutputFormatter::function_deltas(baseline, current)
+            .unwrap()
+            .into_iter()
+            .map(|delta| delta.name)
+            .collect();
+
+        // 990 each for `alpha` and `omega`, tied on size and broken by name; `big`'s +1000 is the
+        // largest move, so it leads; `small`'s +10 is last.
+        assert_eq!(names, ["big", "alpha", "omega", "small"]);
+    }
+
+    #[test]
+    fn a_malformed_profile_is_reported_before_any_comparison() {
+        // Which file is broken has to be discoverable, and a delta computed from a half-read file
+        // would be a wrong answer rather than a refused one.
+        let error = OutputFormatter::function_deltas("stack 1\n", "not a folded line\n")
+            .expect_err("the current file has no cost");
+        assert!(error.contains("line 1"), "{error}");
+        assert!(
+            error.starts_with("current:"),
+            "two files were read and the message must say which one: {error}"
+        );
+    }
+
+    #[test]
+    fn the_compare_report_shows_both_counts_and_the_move() {
+        let deltas = OutputFormatter::function_deltas("a 100\nb 100\n", "a 40\nb 160\n").unwrap();
+        let report = OutputFormatter::to_compare_report(&deltas, false);
+        let lines: Vec<&str> = report.lines().collect();
+
+        assert_eq!(
+            lines.first().expect("a header"),
+            &"Cost comparison, baseline → current (exclusive cost per function):"
+        );
+        // `b` moved +60 and `a` moved -60, tied on size, so `a` leads and `b` follows.
+        assert!(
+            lines[1].starts_with(" a  ") && lines[1].ends_with("-60"),
+            "expected `a`'s row first: {:?}",
+            lines[1]
+        );
+        assert!(
+            lines[2].starts_with(" b  ") && lines[2].ends_with("+60"),
+            "expected `b`'s row second: {:?}",
+            lines[2]
+        );
+        // Both counts are on the line, because a delta alone cannot say how large a change it is.
+        assert!(
+            lines[1].contains("100") && lines[1].contains("40"),
+            "{}",
+            lines[1]
+        );
+        assert!(
+            lines[3].starts_with(" total") && lines[3].contains("200") && lines[3].ends_with("+0"),
+            "the totals row: {:?}",
+            lines[3]
+        );
+        assert_eq!(
+            lines.last().expect("the tally"),
+            &"2 of 2 functions changed cost, 0 unchanged"
+        );
+    }
+
+    #[test]
+    fn the_compare_report_leaves_unchanged_functions_out_and_says_how_many() {
+        let deltas = OutputFormatter::function_deltas(
+            "moved 100\nstill 50\nalso 25\n",
+            "moved 10\nstill 50\nalso 25\n",
+        )
+        .unwrap();
+        let report = OutputFormatter::to_compare_report(&deltas, false);
+        let lines: Vec<&str> = report.lines().collect();
+
+        assert_eq!(
+            lines.len(),
+            4,
+            "header, one row, totals, tally — the two unchanged functions are not rows: {report:?}"
+        );
+        assert!(lines[1].starts_with(" moved"), "{}", lines[1]);
+        assert!(
+            lines.last().unwrap().contains("2 unchanged"),
+            "the omitted count is stated: {:?}",
+            lines.last()
+        );
+    }
+
+    #[test]
+    fn two_identical_profiles_say_so_instead_of_printing_a_bare_header() {
+        let profile = "a 100\nb 50\n";
+        let deltas = OutputFormatter::function_deltas(profile, profile).unwrap();
+        let report = OutputFormatter::to_compare_report(&deltas, false);
+
+        assert!(report.contains("no function's cost changed"), "{report:?}");
+        assert!(report.contains("2 compared"), "{report:?}");
+        // The totals row still prints: "nothing moved per function" and "the two runs add up
+        // differently" cannot both be true, and the reader checking that wants the number.
+        assert!(report.contains(" total"), "{report:?}");
+    }
+
+    #[test]
+    fn the_compare_report_colours_moves_only_when_asked() {
+        let deltas = OutputFormatter::function_deltas("a 100\nb 100\n", "a 40\nb 160\n").unwrap();
+        let plain = OutputFormatter::to_compare_report(&deltas, false);
+        let painted = OutputFormatter::to_compare_report(&deltas, true);
+
+        assert!(!plain.contains('\x1b'), "{plain:?}");
+        // Red for the regression, green for the improvement, each on its own row.
+        assert!(painted.contains("\x1b[31m+60\x1b[0m"), "{painted:?}");
+        assert!(painted.contains("\x1b[32m-60\x1b[0m"), "{painted:?}");
+        assert_eq!(
+            painted.lines().count(),
+            plain.lines().count(),
+            "color must not change how many lines the report is"
+        );
+    }
+
+    #[test]
+    fn the_compare_report_consumes_the_formatters_own_output() {
+        // Same composition check `to_differential_folded` has: what stage 4 writes is what
+        // `compare` reads, with no format translation in between.
+        let baseline = OutputFormatter::to_collapsed_stack(
+            &node("main", 10, vec![leaf("compute_heavy_loop", 400)]),
+            &Metric::Cpu,
+        );
+        let current = OutputFormatter::to_collapsed_stack(
+            &node("main", 10, vec![leaf("compute_heavy_loop", 900)]),
+            &Metric::Cpu,
+        );
+
+        let deltas = OutputFormatter::function_deltas(&baseline, &current).unwrap();
+        let moved = deltas
+            .iter()
+            .find(|delta| delta.name == "compute_heavy_loop")
+            .expect("the fixture's hot loop should be a row");
+        assert_eq!(moved.delta(), 500);
+        assert!(
+            OutputFormatter::to_compare_report(&deltas, false).contains("1 of 2 functions changed"),
+            "the unchanged `main` frame is tallied, not printed"
         );
     }
 }

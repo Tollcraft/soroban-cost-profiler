@@ -22,7 +22,7 @@
 //!
 //! [`TraceEvent`]: soroban_cost_profiler::models::TraceEvent
 //! [`CallStackNode`]: soroban_cost_profiler::models::CallStackNode
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use soroban_cost_profiler::aggregator::ProfileAggregator;
 use soroban_cost_profiler::formatter::OutputFormatter;
 use soroban_cost_profiler::models::{Metric, TraceEvent};
@@ -32,7 +32,7 @@ use soroban_cost_profiler::tracer::{
     parse_module, setup_engine, setup_mock_env,
 };
 use std::io::IsTerminal;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use wasmi::{ExternType, Val};
 
 /// `value_parser` for `--sample-rate`: accept a positive count, refuse everything else.
@@ -57,12 +57,24 @@ fn parse_positive_u32(s: &str) -> Result<u32, String> {
 }
 
 /// Soroban Cost Profiler
+///
+/// Two shapes: the flat flags profile a contract, and `compare` reads two profiles already on disk.
+/// `subcommand_negates_reqs` is what lets the second shape work without `--wasm` — a mode that
+/// diffs two `.folded` files cannot sensibly demand a contract to execute — while `--wasm` stays
+/// clap-required for the first, so a profiling run that forgot it is still refused with clap's own
+/// message rather than a message this file invented.
 #[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
+#[command(author, version, about, long_about = None, subcommand_negates_reqs = true)]
 pub struct Cli {
-    /// Path to the compiled WASM contract
-    #[arg(short, long)]
-    pub wasm: PathBuf,
+    /// Path to the compiled WASM contract (required, unless `compare` is used)
+    //
+    // `required = true` is spelled out rather than left to the derive: an `Option` field would
+    // otherwise default to *not* required, and then a profiling run that forgot `--wasm` would
+    // parse and fail somewhere deep in the pipeline instead of at the flag. The rationale is a
+    // comment and not part of the doc comment because clap puts doc comments in `--help`, where
+    // "why this is an Option" is not the answer to "what does this flag want".
+    #[arg(short, long, required = true)]
+    pub wasm: Option<PathBuf>,
 
     /// Output file path for the .folded stacks
     #[arg(short, long, default_value = "profile.folded")]
@@ -79,6 +91,32 @@ pub struct Cli {
     /// Cost metric the `.folded` counts are written in
     #[arg(long, value_enum, default_value_t = Metric::Cpu)]
     pub metric: Metric,
+
+    /// Mode to run instead of profiling: see [`Command`]
+    #[command(subcommand)]
+    pub command: Option<Command>,
+}
+
+/// The modes that do not execute a contract (#190).
+#[derive(Subcommand, Debug, PartialEq, Eq)]
+pub enum Command {
+    /// Print how each function's cost changed between two `.folded` profiles.
+    ///
+    /// `baseline` is the "before" and `current` the "after", and the report ranks the functions
+    /// whose cost moved, biggest change first, so the headline number a reviewer wants — did this
+    /// change make the contract cheaper — is the last line of the table.
+    ///
+    /// The counts are read exactly as each file wrote them, so the two must come from runs with
+    /// the same `--metric`; the files do not record which metric they hold, and this mode cannot
+    /// check that. `--sample-rate`, `--metric` and the profiling flags belong to a run and are not
+    /// consulted here, which is why `--wasm` next to `compare` is refused rather than ignored.
+    Compare {
+        /// The `.folded` file to compare against
+        baseline: PathBuf,
+
+        /// The `.folded` file to compare to it
+        current: PathBuf,
+    },
 }
 
 /// How many functions the terminal summary ranks (#181's "top 5").
@@ -339,9 +377,18 @@ fn run_target(
 /// to the message that says it stopped early.
 fn profile(cli: &Cli) -> Result<(), Failure> {
     // 1. Read the contract and run the target export under the tracer.
-    let wasm_bytes = load_wasm_file(&cli.wasm.to_string_lossy()).map_err(|error| {
-        Failure::Input(format!("failed to read {}: {error}", cli.wasm.display()))
+    //
+    // Unreachable from a real command line — `subcommand_negates_reqs` leaves `--wasm` required
+    // whenever no subcommand was given — but `Cli` is public and `profile` is called directly by
+    // the stage tests, so the type has to be answered rather than assumed.
+    let wasm = cli.wasm.as_ref().ok_or_else(|| {
+        Failure::Input(String::from(
+            "--wasm is required: name the contract to profile, or use `compare <baseline> \
+             <current>` to diff two profiles that already exist.",
+        ))
     })?;
+    let wasm_bytes = load_wasm_file(&wasm.to_string_lossy())
+        .map_err(|error| Failure::Input(format!("failed to read {}: {error}", wasm.display())))?;
     let run = run_target(&wasm_bytes, &cli.fn_name, initialize_tracer(cli))?;
 
     // 2. Load DWARF source map
@@ -386,6 +433,57 @@ fn profile(cli: &Cli) -> Result<(), Failure> {
     Ok(())
 }
 
+/// Read one `.folded` artifact for `compare`, naming the file it failed on.
+///
+/// A read failure is input, whatever the reason: the user pointed at something that is not a
+/// profile they can compare, whether it does not exist, is a directory, or is not UTF-8 text.
+fn read_folded(path: &Path) -> Result<String, Failure> {
+    std::fs::read_to_string(path)
+        .map_err(|error| Failure::Input(format!("failed to read {}: {error}", path.display())))
+}
+
+/// The `compare` mode (#190): diff two profiles and print the cost moves.
+///
+/// A subcommand rather than a `--compare <file>` flag on the profiling path because the question
+/// "did my change help?" is answered from two files that already exist. As a flag it would have
+/// made `--wasm` a required argument of a run that never happens, and the user would have had to
+/// name a contract to avoid naming one.
+///
+/// Both files are read and parsed before anything is printed, so a malformed second file cannot
+/// leave half a report on the terminal. The exit code is `0` whatever the numbers say: a found
+/// regression is a correct answer, not a failed run, and a CI gate that had to ignore the code to
+/// read the table would be a worse tool.
+fn compare(baseline: &Path, current: &Path) -> Result<(), Failure> {
+    let baseline = read_folded(baseline)?;
+    let current = read_folded(current)?;
+    let deltas = OutputFormatter::function_deltas(&baseline, &current).map_err(Failure::Input)?;
+    println!(
+        "{}",
+        OutputFormatter::to_compare_report(&deltas, std::io::stdout().is_terminal())
+    );
+    Ok(())
+}
+
+/// Dispatch the invocation to the mode it named.
+///
+/// `--wasm` beside `compare` is refused instead of ignored. Either flag on its own says what to do;
+/// both together say two things, and the only honest answers are "run the contract and ignore the
+/// files" or "read the files and ignore the contract" — the tool should not pick one silently.
+fn run(cli: &Cli) -> Result<(), Failure> {
+    match &cli.command {
+        Some(Command::Compare { baseline, current }) => {
+            if cli.wasm.is_some() {
+                return Err(Failure::Input(String::from(
+                    "`compare` reads two .folded files and runs no contract, so `--wasm` cannot \
+                     accompany it.",
+                )));
+            }
+            compare(baseline, current)
+        }
+        None => profile(cli),
+    }
+}
+
 /// The exit code for a clap error (#183).
 ///
 /// clap answers `--help` and `--version` by returning an error that prints to stdout — those are
@@ -407,8 +505,9 @@ fn clap_exit_code(error: &clap::Error) -> i32 {
 /// that had never run its WASM still managed to print a plausible-looking empty profile.
 ///
 /// Two exit codes, one message shape. A bad invocation — unreadable contract, unknown export, a
-/// contract that trapped — is `1`; a profiler that could not finish its own work is `2`. `--help`
-/// and `--version` print and exit `0`.
+/// contract that trapped, an unreadable or malformed `.folded` file — is `1`; a profiler that could
+/// not finish its own work is `2`. `--help` and `--version` print and exit `0`, and so does a
+/// `compare` that found a regression: the report is the result, not a failure.
 fn main() {
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
@@ -419,7 +518,7 @@ fn main() {
             std::process::exit(clap_exit_code(&error));
         }
     };
-    if let Err(failure) = profile(&cli) {
+    if let Err(failure) = run(&cli) {
         eprintln!("error: {}", failure.message());
         std::process::exit(failure.code());
     }
@@ -444,12 +543,32 @@ mod tests {
 
     fn cli(output: PathBuf, wasm: PathBuf, fn_name: &str) -> Cli {
         Cli {
-            wasm,
+            wasm: Some(wasm),
             output,
             fn_name: fn_name.into(),
             sample_rate: 1000,
             metric: Metric::Cpu,
+            command: None,
         }
+    }
+
+    /// A `compare` invocation over two files that are already on disk.
+    fn compare_cli(baseline: PathBuf, current: PathBuf) -> Cli {
+        Cli {
+            wasm: None,
+            output: PathBuf::from("unused.folded"),
+            fn_name: String::new(),
+            sample_rate: 1000,
+            metric: Metric::Cpu,
+            command: Some(Command::Compare { baseline, current }),
+        }
+    }
+
+    /// Write a tiny `.folded` artifact and hand back its path.
+    fn folded_file(dir: &tempfile::TempDir, name: &str, body: &str) -> PathBuf {
+        let path = dir.path().join(name);
+        std::fs::write(&path, body).unwrap();
+        path
     }
 
     fn fixture() -> PathBuf {
@@ -851,5 +970,131 @@ mod tests {
                 "the advice must name a profiling profile, never the release one: {message}"
             );
         }
+    }
+
+    /// #190's structural "done": two profiles on disk, no contract in sight. This is the case
+    /// `subcommand_negates_reqs` exists for — a runtime check in `profile` would have made
+    /// `--wasm` optional to clap, and then a profiling run that forgot it would parse and fail
+    /// somewhere deep in the pipeline instead of at the flag.
+    #[test]
+    fn compare_is_a_mode_that_needs_no_contract() {
+        let cli = Cli::try_parse_from([
+            "soroban-cost-profiler",
+            "compare",
+            "base.folded",
+            "new.folded",
+        ])
+        .expect("`compare` names its two files and nothing else");
+
+        assert_eq!(
+            cli.command,
+            Some(Command::Compare {
+                baseline: PathBuf::from("base.folded"),
+                current: PathBuf::from("new.folded"),
+            })
+        );
+        assert!(cli.wasm.is_none(), "the negated flag stays unset");
+    }
+
+    /// The negation is conditional, and this is the half that makes it safe: with no subcommand,
+    /// `--wasm` is still required and clap says so in its own words, listing what it did not get.
+    /// #183 maps that refusal to exit `1` like every other command line to fix.
+    #[test]
+    fn profiling_still_cannot_run_without_a_contract() {
+        let error = Cli::try_parse_from(["soroban-cost-profiler", "--fn", "call"])
+            .expect_err("`--wasm` is required when no subcommand was named");
+        let rendered = error.render().to_string();
+        assert!(rendered.contains("--wasm"), "{rendered}");
+        assert_eq!(clap_exit_code(&error), 1);
+    }
+
+    /// The default path still profiles: an absent subcommand must not become a third mode that
+    /// quietly does nothing.
+    #[test]
+    fn no_subcommand_still_profiles() {
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("profile.folded");
+        run(&cli(output.clone(), fixture(), "caller_of_heavy")).unwrap();
+        assert!(output.exists(), "the `.folded` artifact is the proof");
+    }
+
+    /// A regression the report finds is the answer, not a failed run, so `compare` exits `0`
+    /// whatever the numbers say. A tool that exited non-zero on "your change made it dearer" would
+    /// force a CI gate to ignore the exit code in order to read the table — and then the code stops
+    /// meaning anything to anyone, including #183.
+    #[test]
+    fn a_found_regression_is_a_successful_run() {
+        let dir = tempfile::tempdir().unwrap();
+        let baseline = folded_file(&dir, "base.folded", "caller_of_heavy 100\n");
+        let current = folded_file(&dir, "new.folded", "caller_of_heavy 400\n");
+
+        assert!(run(&compare_cli(baseline, current)).is_ok());
+    }
+
+    /// Both files are read and parsed before the first row prints, and a bad line names its file:
+    /// `parse_folded` counts from the start of whatever string it was handed, so "line 1" on its own
+    /// would leave the reader choosing between two candidates.
+    #[test]
+    fn a_malformed_profile_names_its_file_and_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let baseline = folded_file(&dir, "base.folded", "caller_of_heavy 100\n");
+        let broken = folded_file(&dir, "new.folded", "this is not a folded line\n");
+
+        let error = input_failure(run(&compare_cli(baseline, broken)).unwrap_err());
+        assert!(error.contains("current:"), "{error}");
+        assert!(error.contains("line 1"), "{error}");
+    }
+
+    /// An absent file is #183's input error, with the path in the message — the second file is the
+    /// one a mistype lands on, because the first is already on screen from the run that made it.
+    #[test]
+    fn an_absent_profile_is_named_rather_than_mysterious() {
+        let dir = tempfile::tempdir().unwrap();
+        let baseline = folded_file(&dir, "base.folded", "caller_of_heavy 100\n");
+        let missing = dir.path().join("nope.folded");
+
+        let error = input_failure(run(&compare_cli(baseline, missing)).unwrap_err());
+        assert!(error.contains("nope.folded"), "{error}");
+    }
+
+    /// `--wasm` beside `compare` states two intentions at once, and whichever answer the tool picked
+    /// it would pick silently: the files are what was asked about, the contract is what was named.
+    /// Refused rather than guessed, and still an input error — it is the command line to fix.
+    #[test]
+    fn a_contract_beside_compare_is_refused_not_ignored() {
+        let dir = tempfile::tempdir().unwrap();
+        let baseline = folded_file(&dir, "base.folded", "caller_of_heavy 100\n");
+        let current = folded_file(&dir, "new.folded", "caller_of_heavy 90\n");
+        let cli = Cli {
+            wasm: Some(fixture()),
+            ..compare_cli(baseline, current)
+        };
+
+        let error = input_failure(run(&cli).unwrap_err());
+        assert!(error.contains("--wasm"), "{error}");
+    }
+
+    /// Stage 4's own output is what `compare` consumes: two runs of the same contract differ by
+    /// nothing, and that property is what makes a real change readable. Today both profiles are the
+    /// single zero-cost frame `wasmi` hands the tracer, so this pins the composition — file written,
+    /// parsed back, no phantom moves — rather than interesting numbers.
+    #[test]
+    fn two_runs_of_the_same_contract_compare_to_nothing_moved() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = dir.path().join("first.folded");
+        let second = dir.path().join("second.folded");
+        profile(&cli(first.clone(), fixture(), "caller_of_heavy")).unwrap();
+        profile(&cli(second.clone(), fixture(), "caller_of_heavy")).unwrap();
+
+        let deltas = OutputFormatter::function_deltas(
+            &std::fs::read_to_string(&first).unwrap(),
+            &std::fs::read_to_string(&second).unwrap(),
+        )
+        .unwrap();
+        assert!(!deltas.is_empty(), "the runs produced frames to compare");
+        assert!(
+            deltas.iter().all(|delta| delta.delta() == 0),
+            "two identical runs must report no moves: {deltas:?}"
+        );
     }
 }
