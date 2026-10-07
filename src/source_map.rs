@@ -344,15 +344,14 @@ impl SourceMapper {
                 total_sampled += 1;
                 
                 let mut resolved = false;
-                if let Ok(mut frames) = context.find_frames(pc as u64).skip_all_loads() {
-                    if let Ok(Some(frame)) = frames.next() {
-                        if let Some(loc) = frame.location {
-                            resolved = true;
-                            let line_id = (loc.file.map(String::from), loc.line);
-                            if !unique_lines.insert(line_id) {
-                                missing_or_duplicate += 1;
-                            }
-                        }
+                if let Ok(mut frames) = context.find_frames(pc as u64).skip_all_loads()
+                    && let Ok(Some(frame)) = frames.next()
+                    && let Some(loc) = frame.location
+                {
+                    resolved = true;
+                    let line_id = (loc.file.map(String::from), loc.line);
+                    if !unique_lines.insert(line_id) {
+                        missing_or_duplicate += 1;
                     }
                 }
                 
