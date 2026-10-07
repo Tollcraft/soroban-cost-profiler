@@ -56,15 +56,26 @@ fn parse_positive_u32(s: &str) -> Result<u32, String> {
     }
 }
 
-/// Soroban Cost Profiler
-///
 /// Two shapes: the flat flags profile a contract, and `compare` reads two profiles already on disk.
 /// `subcommand_negates_reqs` is what lets the second shape work without `--wasm` — a mode that
 /// diffs two `.folded` files cannot sensibly demand a contract to execute — while `--wasm` stays
 /// clap-required for the first, so a profiling run that forgot it is still refused with clap's own
 /// message rather than a message this file invented.
+///
+/// `about` is not spelled out here: `#[command(about)]` takes it from `[package.description]` in
+/// `Cargo.toml` (#185), which is the reason this doc comment no longer doubles as the help header.
+/// `long_about` and `after_help` are literals and not constants because clap's derive reads these
+/// attributes as literals; they are the user-facing half of #176, and the tests in this file render
+/// the help rather than string-matching the source, so moving the text has to be a content change.
 #[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None, subcommand_negates_reqs = true)]
+#[command(
+    author,
+    version,
+    about,
+    long_about = "soroban-cost-profiler traces one exported function of a compiled Soroban contract and says where its cost went.\n\nTwo modes:\n  profile   --wasm <contract.wasm> --fn <export> runs that export under the instrumented engine and writes collapsed stacks to --output (default: profile.folded). Frames are named from the binary's own DWARF line tables when it has them; a binary built without debug info still profiles, and the run then says so on stderr instead of pretending its `wasm[pc]` frames are source lines.\n  compare   compare <base.folded> <new.folded> reads two profiles already on disk and prints the functions whose cost moved, biggest move first. It runs no contract, so it needs no --wasm.\n\nThe .folded file is the artifact. Open it in speedscope.app, or hand it to flamegraph.pl for a picture; this tool writes text and no SVG. The terminal summary is a glance at the same run, not a second source of truth.\n\nExit codes:\n  0  the run was honoured as asked; a compare that reports a regression still exits 0, because bad news is still an answer\n  1  the invocation could not be honoured as asked: a contract that cannot be read, parsed or linked, an export the module does not have, a contract that trapped, a .folded file that is missing or malformed, or a refused flag\n  2  the input was accepted and the profiler could not finish its own work: a write the machine refused for a reason other than the path, or an engine that would not configure",
+    after_help = "Examples:\n  # profile the `call` export\n  soroban-cost-profiler --wasm target/wasm32-unknown-unknown/release/contract.wasm --fn call\n\n  # the same run in memory units, into a named file\n  soroban-cost-profiler --wasm contract.wasm --fn call --metric memory --output memory.folded\n\n  # a denser trace: one event every 100 rather than every 1000\n  soroban-cost-profiler --wasm contract.wasm --fn call --sample-rate 100\n\n  # did the change help?\n  soroban-cost-profiler compare before.folded after.folded",
+    subcommand_negates_reqs = true
+)]
 pub struct Cli {
     /// Path to the compiled WASM contract (required, unless `compare` is used)
     //
@@ -77,11 +88,20 @@ pub struct Cli {
     pub wasm: Option<PathBuf>,
 
     /// Output file path for the .folded stacks
+    ///
+    /// This is the artifact the run leaves behind: speedscope.app opens it directly, and
+    /// `flamegraph.pl` turns it into a picture. `compare` reads files of this same shape.
     #[arg(short, long, default_value = "profile.folded")]
     pub output: PathBuf,
 
-    /// Exported function to invoke, e.g. `--fn call` (required)
-    #[arg(long = "fn", default_value = "")]
+    /// Exported function to invoke, e.g. `--fn call`
+    ///
+    /// Profiling refuses to start without one, and a name the module does not export is an error
+    /// that lists the exports it does have.
+    ///
+    /// The default is hidden because `[default: ]` reads like an accepted empty name, and it is
+    /// not: an empty `--fn` is refused at the run, not by clap.
+    #[arg(long = "fn", default_value = "", hide_default_value = true)]
     pub fn_name: String,
 
     /// Record one trace event every N instructions (must be greater than 0)
@@ -89,6 +109,9 @@ pub struct Cli {
     pub sample_rate: u32,
 
     /// Cost metric the `.folded` counts are written in
+    ///
+    /// A `.folded` file records no metric of its own, so two files handed to `compare` must come
+    /// from runs that agreed on this flag already.
     #[arg(long, value_enum, default_value_t = Metric::Cpu)]
     pub metric: Metric,
 
@@ -527,6 +550,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::CommandFactory;
     use soroban_cost_profiler::models::EventType;
 
     const FIXTURE: &[u8] = include_bytes!("../fixtures/dwarf_probe/dwarf_probe.wasm");
@@ -709,6 +733,151 @@ mod tests {
         let missing = Cli::try_parse_from(["soroban-cost-profiler"])
             .expect_err("--wasm is required, so this must be refused");
         assert_eq!(clap_exit_code(&missing), 1);
+    }
+
+    /// The help as a user sees it, rendered rather than read from the source.
+    ///
+    /// The attributes are compile-time data, so a test that string-matched this file would still
+    /// pass if clap stopped rendering them. These call the same renderer `main`'s error path uses.
+    fn long_help() -> String {
+        Cli::command().render_long_help().to_string()
+    }
+
+    fn short_help() -> String {
+        Cli::command().render_help().to_string()
+    }
+
+    /// #185: the header line and the author are package metadata, not strings living twice.
+    ///
+    /// Before this, `Cargo.toml` had no `description`, so `#[command(about)]` — the wiring the issue
+    /// asks for — resolved to an empty string and the `Cli` doc comment was standing in for it by
+    /// accident. The absence check is what keeps that arrangement from silently coming back.
+    #[test]
+    fn the_help_header_and_author_come_from_cargo_toml() {
+        let help = short_help();
+        assert!(
+            help.contains(env!("CARGO_PKG_DESCRIPTION")),
+            "the `-h` header must be `[package.description]`"
+        );
+        assert!(
+            !help.contains("Soroban Cost Profiler"),
+            "the old doc-comment header must not still be what renders"
+        );
+        assert!(
+            !env!("CARGO_PKG_AUTHORS").is_empty(),
+            "`#[command(author)]` would otherwise advertise an author field that says nothing"
+        );
+    }
+
+    /// #185's "done" clause: `--version` works, and the number it prints is the crate's own.
+    #[test]
+    fn the_version_flag_reports_the_package_and_its_cargo_version() {
+        let rendered = Cli::command().render_version().to_string();
+        assert_eq!(
+            rendered.trim(),
+            format!("soroban-cost-profiler {}", env!("CARGO_PKG_VERSION")),
+            "`--version` is the crate name and Cargo's version, and nothing else"
+        );
+        assert_eq!(clap_exit_code(&clap_error(&["--version"])), 0);
+    }
+
+    /// #183's table, printed at last: a caller that scripts against the CLI needs the codes without
+    /// having to read this file first, which is what "not printed by `--help` yet" left open.
+    #[test]
+    fn the_long_help_prints_the_exit_code_table() {
+        let help = long_help();
+        for line in [
+            "Exit codes:",
+            "0  the run was honoured as asked",
+            "1  the invocation could not be honoured as asked",
+            "2  the input was accepted and the profiler could not finish its own work",
+        ] {
+            assert!(help.contains(line), "the help must carry {line:?}");
+        }
+        assert!(
+            !short_help().contains("Exit codes"),
+            "`-h` is the summary; the table is the `--help` half of the split clap makes for this"
+        );
+    }
+
+    /// The two questions a first run actually asks — which mode do I want, and what do I do with the
+    /// file — answered in the help rather than in review comments.
+    #[test]
+    fn the_long_help_names_both_modes_and_where_the_output_goes() {
+        let help = long_help();
+        for phrase in [
+            "--wasm <contract.wasm>",
+            "compare <base.folded>",
+            "speedscope.app",
+            "flamegraph.pl",
+            "no SVG",
+            "without debug info",
+        ] {
+            assert!(
+                help.contains(phrase),
+                "the help must say something about {phrase:?}"
+            );
+        }
+    }
+
+    /// An example that does not parse is worse than no example, because the reader trusts it.
+    ///
+    /// The lines are read back off the rendered help, so the test cannot pass while the printed text
+    /// and the accepted flags drift apart — which is exactly what a hardcoded argv list in here would
+    /// have hidden. Indentation is the selector: the `long_about` header also starts with the
+    /// program's name, at column 0, and it is prose rather than a command line.
+    #[test]
+    fn every_example_in_the_help_parses() {
+        let examples: Vec<Vec<String>> = long_help()
+            .lines()
+            .filter_map(|line| line.strip_prefix("  soroban-cost-profiler "))
+            .map(|rest| rest.split_whitespace().map(String::from).collect())
+            .filter(|argv: &Vec<String>| !argv.is_empty())
+            .collect();
+
+        assert!(
+            examples.len() >= 4,
+            "expected the documented examples in the help, parsed {examples:?}"
+        );
+        for argv in &examples {
+            let parsed = Cli::try_parse_from(
+                std::iter::once("soroban-cost-profiler").chain(argv.iter().map(String::as_str)),
+            );
+            assert!(
+                parsed.is_ok(),
+                "example `{}` does not parse: {}",
+                argv.join(" "),
+                parsed.unwrap_err()
+            );
+        }
+        assert!(
+            examples
+                .iter()
+                .any(|argv| argv.first().is_some_and(|arg| arg == "compare")),
+            "the help documents one mode while the code has two"
+        );
+    }
+
+    /// `[default: ]` on `--fn` reads as though an empty export name were accepted. It is not — the
+    /// run refuses it — and an empty default is an artifact of how the flag is parsed, not a value
+    /// worth advertising.
+    #[test]
+    fn the_short_help_hides_defaults_that_mean_nothing() {
+        let help = short_help();
+        assert!(
+            !help.contains("[default: ]"),
+            "an empty default must not be presented as if it were one"
+        );
+        for real in [
+            "[default: profile.folded]",
+            "[default: 1000]",
+            "[default: cpu]",
+        ] {
+            assert!(
+                help.contains(real),
+                "a real default must still show: {real}"
+            );
+        }
     }
 
     /// The other side of the write path, and the reason the code is not simply hardcoded to 1: a
