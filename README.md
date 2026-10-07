@@ -83,7 +83,9 @@ soroban-cost-profiler compare before.folded after.folded
 | `compare <BASE> <CURRENT>` | — | The second mode: reads two `.folded` files, prints the functions whose cost moved, biggest move first. |
 
 `--help` prints these with their long-form notes and the exit-code table; `-h` is the short version;
-`--version` prints the crate name and version.
+`--version` prints the crate name and version. When a run does not look right,
+[docs/troubleshooting.md](docs/troubleshooting.md) works through every message this tool writes, one symptom
+at a time, and says which of them are the engine's ceilings rather than your contract.
 
 ### A real run, start to finish
 
