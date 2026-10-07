@@ -23,6 +23,33 @@ pub enum DeltaScale {
 
 impl OutputFormatter {
     /// Formats the tree into a collapsed stack efficiently.
+
+    pub fn top_functions(root: &CallStackNode, metric: &Metric, n: usize) -> Vec<(String, u64)> {
+        let mut costs = std::collections::HashMap::new();
+        Self::traverse_costs(root, metric, &mut costs);
+
+        let mut ranked: Vec<_> = costs.into_iter().collect();
+        ranked.sort_by(|a, b| b.1.cmp(&a.1));
+        ranked.truncate(n);
+        ranked
+    }
+
+    fn traverse_costs(node: &CallStackNode, metric: &Metric, costs: &mut std::collections::HashMap<String, u64>) {
+        let cost = match metric {
+            Metric::Cpu => node.exclusive_cpu,
+            Metric::Memory => node.exclusive_mem,
+            Metric::Hostcalls => node.exclusive_hostcalls,
+        };
+
+        if cost > 0 {
+            *costs.entry(node.frame.function_name.clone()).or_insert(0) += cost;
+        }
+
+        for child in node.children.values() {
+            Self::traverse_costs(child, metric, costs);
+        }
+    }
+
     pub fn to_collapsed_stack(root: &CallStackNode, metric: &Metric) -> String {
         let mut output = String::with_capacity(1024); // Pre-allocate to optimize memory allocations
         let mut current_path = String::new();
@@ -325,6 +352,34 @@ mod tests {
             .collect();
 
         assert_eq!(paths, vec!["a", "m", "z"]);
+    }
+
+
+    #[test]
+    fn top_functions_ranks_and_truncates() {
+        let tree = node(
+            "main",
+            10,
+            vec![
+                node(
+                    "a",
+                    50,
+                    vec![leaf("a_child", 200)],
+                ),
+                node(
+                    "b",
+                    100,
+                    vec![leaf("b_child", 30)],
+                ),
+            ],
+        );
+
+        // top 3 by CPU
+        let top = OutputFormatter::top_functions(&tree, &Metric::Cpu, 3);
+        assert_eq!(top.len(), 3);
+        assert_eq!(top[0], ("a_child".to_string(), 200));
+        assert_eq!(top[1], ("b".to_string(), 100));
+        assert_eq!(top[2], ("a".to_string(), 50));
     }
 
     #[test]
