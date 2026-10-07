@@ -11,21 +11,21 @@
 //! 4. **Format** — serialize the tree as `.folded` collapsed stacks for external
 //!    viewers such as speedscope (`formatter`).
 //!
-//! Stage 2 is still a scaffold (Phase 3 of `ROADMAP.md`), so the mapper it builds resolves
-//! nothing and every frame reaches Stage 3 as an unresolved `wasm[pc]`. The four calls that hand
-//! data between stages are now live; what is still missing is real input, which Phase 5's CLI
-//! supplies.
+//! Stage 1 is now a real run: `profile` reads `--wasm`, instantiates it, and invokes the export
+//! named by `--fn`. Stage 2 is the one that still under-delivers — the mapper resolves DWARF and
+//! `name`-section frames, but `wasmi` 2.0 hands its call hook no program counter, so every event
+//! arrives at `pc = 0` and every frame reaches Stage 3 as an unresolved `wasm[0]`.
 //!
-//! Each stage's construction lives in its own function so that wiring Phase 3 in is a one-line
-//! change at the call site, and so the placeholder input each stage needs today has a documented
-//! home instead of sitting inline in `main`.
+//! Each stage's construction lives in its own function so that wiring the next phase in is a
+//! one-line change at the call site, and so the placeholder input each stage needs today has a
+//! documented home instead of sitting inline in `main`.
 //!
 //! [`TraceEvent`]: soroban_cost_profiler::models::TraceEvent
 //! [`CallStackNode`]: soroban_cost_profiler::models::CallStackNode
 use clap::Parser;
 use soroban_cost_profiler::aggregator::ProfileAggregator;
 use soroban_cost_profiler::formatter::OutputFormatter;
-use soroban_cost_profiler::models::Metric;
+use soroban_cost_profiler::models::{Metric, TraceEvent};
 use soroban_cost_profiler::source_map::SourceMapper;
 use soroban_cost_profiler::tracer::{
     ExecutionTracer, ProfilerState, instantiate_module, invoke_function, load_wasm_file,
@@ -33,7 +33,7 @@ use soroban_cost_profiler::tracer::{
 };
 use std::path::PathBuf;
 use tracing::warn;
-use wasmi::Val;
+use wasmi::{ExternType, Val};
 
 /// Soroban Cost Profiler
 #[derive(Parser, Debug)]
@@ -47,7 +47,7 @@ pub struct Cli {
     #[arg(short, long, default_value = "profile.folded")]
     pub output: PathBuf,
 
-    /// Target function to invoke
+    /// Exported function to invoke, e.g. `--fn call` (required)
     #[arg(long = "fn", default_value = "")]
     pub fn_name: String,
 
@@ -55,15 +55,12 @@ pub struct Cli {
     #[arg(long, default_value_t = 1000)]
     pub sample_rate: u32,
 
-    /// Cost metric to aggregate
+    /// Cost metric the `.folded` counts are written in
     #[arg(long, value_enum, default_value_t = Metric::Cpu)]
     pub metric: Metric,
 }
 
-/// Stage 1: build a tracer carrying the MVP sampling and instruction-ceiling defaults.
-///
-/// The engine hooks that feed it are installed by `tracer::invoke_function`, which needs a
-/// `Store<ProfilerState>` rather than a bare tracer — that wiring lands with Phase 2's CLI.
+/// Stage 1: build a tracer carrying the CLI's sampling rate and the MVP instruction ceiling.
 fn initialize_tracer(cli: &Cli) -> ExecutionTracer {
     ExecutionTracer::new().with_sample_rate(cli.sample_rate as u64)
 }
@@ -74,9 +71,6 @@ fn initialize_tracer(cli: &Cli) -> ExecutionTracer {
 /// without symbols still profiles, it just names frames `wasm[pc]`. The error is logged because
 /// it tells the user which build flag to set — a flamegraph of unnamed frames is otherwise
 /// indistinguishable from a profiler that is not working.
-///
-/// Empty bytes are the placeholder until Phase 5 reads the binary from disk (`load_wasm_file`),
-/// so this logs `NotWasm` and continues with an unmapped mapper.
 fn load_source_mapper(wasm_bytes: &[u8]) -> SourceMapper {
     SourceMapper::new(wasm_bytes).unwrap_or_else(|error| {
         warn!("cannot symbolize frames: {error}");
@@ -89,66 +83,91 @@ fn initialize_aggregator() -> ProfileAggregator {
     ProfileAggregator::new()
 }
 
-/// Run the whole pipeline over an empty trace and return the folded stacks it produces.
+/// Describe a `--fn` the module cannot run by listing the exports it does have.
 ///
-/// All four stages are now wired in call order, but it is still a dry harness: no WASM is
-/// executed, so the tracer flushes nothing and the result is one zero-cost frame. Flag parsing
-/// (`--wasm`, `--output`) is Phase 5, which replaces the empty trace with a real run and writes
-/// this return value to disk.
-fn profile(cli: &Cli) {
-    let wasm_bytes = match load_wasm_file(cli.wasm.to_str().unwrap_or_default()) {
-        Ok(bytes) => bytes,
-        Err(e) => {
-            tracing::error!("Failed to load WASM file: {}", e);
-            std::process::exit(1);
-        }
-    };
+/// The list is the point. Without it `--fn compute_heavy` and a forgotten `--fn` both read as
+/// the same dead end, and the user has no way to tell a typo from a missing flag without
+/// reaching for `wasm-objdump`.
+fn unknown_export(fn_name: &str, module: &wasmi::Module) -> String {
+    let mut functions: Vec<&str> = module
+        .exports()
+        .filter(|export| matches!(export.ty(), ExternType::Func(_)))
+        .map(|export| export.name())
+        .collect();
+    functions.sort_unstable();
+    let names = functions.join(", ");
+    if fn_name.is_empty() {
+        format!("--fn is required; the module exports {names}")
+    } else {
+        format!("'{fn_name}' is not an exported function; the module exports {names}")
+    }
+}
 
+/// Stage 1, executed: instantiate `wasm_bytes`, invoke `fn_name`, and hand back the trace it
+/// produced next to the function's own return values.
+///
+/// The values are part of this function's contract because the trace cannot prove a run happened.
+/// `wasmi` 2.0's call hook reports no program counter and no fuel, so every boundary it records
+/// costs 0, and an aborted run writes a `.folded` file byte-identical to a completed one. Whoever
+/// needs to know whether the contract actually executed reads the results — which is what the
+/// tests below assert.
+///
+/// Every failure returns a message rather than calling `process::exit`, so the failure paths stay
+/// testable and `main` remains the only place that decides how to report them. A trap mid-call is
+/// reported and *not* flushed as a partial trace: that is #173's job, and until it lands the
+/// partial trace would hold nothing but zero-cost boundaries anyway.
+fn run_target(
+    wasm_bytes: &[u8],
+    fn_name: &str,
+    tracer: ExecutionTracer,
+) -> Result<(Vec<TraceEvent>, Vec<Val>), String> {
     let engine = setup_engine();
-    let module = match parse_module(&engine, &wasm_bytes) {
-        Ok(m) => m,
-        Err(e) => {
-            tracing::error!("Failed to parse WASM module: {}", e);
-            std::process::exit(1);
-        }
-    };
+    let module = parse_module(&engine, wasm_bytes)
+        .map_err(|error| format!("failed to parse WASM module: {error}"))?;
+    if !matches!(module.get_export(fn_name), Some(ExternType::Func(_))) {
+        return Err(unknown_export(fn_name, &module));
+    }
 
-    let tracer = initialize_tracer(cli);
     let state = ProfilerState {
         tracer,
         host: setup_mock_env(),
         last_fuel: 0,
     };
-
     let mut store = wasmi::Store::new(&engine, state);
-    store.set_fuel(u64::MAX).unwrap();
+    store
+        .set_fuel(u64::MAX)
+        .map_err(|error| format!("failed to enable fuel metering: {error}"))?;
 
-    match instantiate_module(&engine, &mut store, &module) {
-        Ok(instance) => {
-            let func_name = if cli.fn_name.is_empty() {
-                "test"
-            } else {
-                &cli.fn_name
-            };
+    let instance = instantiate_module(&engine, &mut store, &module)
+        .map_err(|error| format!("failed to instantiate module: {error}"))?;
 
-            if let Some(func) = instance.get_func(&store, func_name) {
-                let ty = func.ty(&store);
-                let mut results = vec![Val::I32(0); ty.results().len()];
+    // Sized and typed from the signature: a contract returning `u64` gets an `I64` slot, and a
+    // void one runs on an empty buffer.
+    let mut results: Vec<Val> = instance
+        .get_func(&store, fn_name)
+        .ok_or_else(|| unknown_export(fn_name, &module))?
+        .ty(&store)
+        .results()
+        .iter()
+        .map(|ty| Val::default_for_ty(*ty))
+        .collect();
 
-                if let Err(e) = invoke_function(&mut store, &instance, func_name, &[], &mut results)
-                {
-                    tracing::error!("Execution failed: {}", e);
-                }
-            } else {
-                tracing::error!("Function '{}' not found in module", func_name);
-            }
-        }
-        Err(e) => {
-            tracing::error!("Failed to instantiate module: {}", e);
-        }
-    }
+    let values = invoke_function(&mut store, &instance, fn_name, &[], &mut results)
+        .map(|()| results)
+        .map_err(|error| format!("execution of '{fn_name}' failed: {error}"))?;
+    Ok((store.data_mut().tracer.flush_trace(), values))
+}
 
-    let events = store.into_data().tracer.flush_trace();
+/// Run the whole pipeline for one CLI invocation and write the folded stack to `--output`.
+///
+/// Stage 1 is now a real run of the contract named by `--fn`, so the tree it aggregates is the
+/// boundaries that run crossed. The costs in it are still all zero — see [`run_target`]'s note on
+/// what the engine hook reports — which is why the folded output names `wasm[0]` and nothing else.
+fn profile(cli: &Cli) -> Result<(), String> {
+    // 1. Read the contract and run the target export under the tracer.
+    let wasm_bytes = load_wasm_file(&cli.wasm.to_string_lossy())
+        .map_err(|error| format!("failed to read {}: {error}", cli.wasm.display()))?;
+    let (events, _values) = run_target(&wasm_bytes, &cli.fn_name, initialize_tracer(cli))?;
 
     // 2. Load DWARF source map
     let mapper = load_source_mapper(&wasm_bytes);
@@ -159,55 +178,116 @@ fn profile(cli: &Cli) {
 
     // 4. Format and output
     let output = OutputFormatter::to_collapsed_stack(&call_tree, &cli.metric);
-
-    if let Err(e) = std::fs::write(&cli.output, output) {
-        tracing::error!(
-            "Failed to write folded stack to {}: {}",
-            cli.output.display(),
-            e
-        );
-    } else {
-        tracing::info!(
-            "Successfully wrote folded stack to {}",
-            cli.output.display()
-        );
-    }
-
     OutputFormatter::print_top_functions(&call_tree, &cli.metric, 10);
+
+    std::fs::write(&cli.output, output).map_err(|error| {
+        format!(
+            "failed to write folded stack to {}: {error}",
+            cli.output.display()
+        )
+    })
 }
 
-/// Print the MVP notice and run the harness.
+/// Run the pipeline, reporting any failure on stderr instead of leaving the user a silent exit.
+///
+/// Every message goes through `eprintln!` rather than `tracing` because nothing in this crate
+/// installs a subscriber: a `tracing::error!` on a fatal path writes nowhere, which is how a CLI
+/// that had never run its WASM still managed to print a plausible-looking empty profile.
 fn main() {
     let cli = Cli::parse();
-    println!("soroban-cost-profiler MVP (Not yet implemented)");
-    profile(&cli);
+    if let Err(error) = profile(&cli) {
+        eprintln!("error: {error}");
+        std::process::exit(1);
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use soroban_cost_profiler::models::EventType;
 
-    /// The harness has no WASM to run yet, so the bar is that the stages hand data to each other
-    /// in the documented order and the last one produces a parseable folded stack. An empty trace
-    /// is legal input for the whole pipeline: it ends as one zero-cost, unresolved frame.
+    const FIXTURE: &[u8] = include_bytes!("../fixtures/dwarf_probe/dwarf_probe.wasm");
+
+    /// `caller_of_heavy` is `compute_heavy_loop() + memory_heavy_loop()`: the first sums
+    /// `3 * i` for `i < 1000`, the second sums `7 * i` for `i < 64`.
+    const CALLER_OF_HEAVY: i64 = 1_512_612;
+
+    fn cli(output: PathBuf, wasm: PathBuf, fn_name: &str) -> Cli {
+        Cli {
+            wasm,
+            output,
+            fn_name: fn_name.into(),
+            sample_rate: 1000,
+            metric: Metric::Cpu,
+        }
+    }
+
+    fn fixture() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures/dwarf_probe/dwarf_probe.wasm")
+    }
+
+    fn tracer() -> ExecutionTracer {
+        ExecutionTracer::new().with_sample_rate(1000)
+    }
+
+    /// The issue's "done" state: the named export really executes. The return value is the only
+    /// evidence that distinguishes a completed run from one that never started, so this asserts
+    /// the number the contract computes rather than the shape of the trace.
+    #[test]
+    fn the_named_export_is_invoked_and_its_result_returned() {
+        let (events, values) = run_target(FIXTURE, "caller_of_heavy", tracer()).unwrap();
+        assert!(
+            matches!(values.as_slice(), [Val::I64(value)] if *value == CALLER_OF_HEAVY),
+            "the run must return the value the contract computes, got {values:?}"
+        );
+        let kinds: Vec<&EventType> = events.iter().map(|event| &event.event_type).collect();
+        assert!(
+            kinds.contains(&&EventType::Call) && kinds.contains(&&EventType::Return),
+            "the run must cross both boundaries, not just report a value: {kinds:?}"
+        );
+    }
+
+    #[test]
+    fn an_unknown_fn_names_the_functions_the_module_does_export() {
+        let error = run_target(FIXTURE, "compute_heavy", tracer()).unwrap_err();
+        assert!(
+            error.contains("caller_of_heavy") && error.contains("memory_heavy_loop"),
+            "{error}"
+        );
+    }
+
+    /// The harness used to answer an absent `--fn` by running a `"test"` export no fixture has,
+    /// which failed silently. Not knowing which export to profile is not a runnable default.
+    #[test]
+    fn an_empty_fn_name_is_an_error_rather_than_a_guess() {
+        let error = run_target(FIXTURE, "", tracer()).unwrap_err();
+        assert!(error.starts_with("--fn is required"), "{error}");
+    }
+
+    #[test]
+    fn a_missing_wasm_file_fails_instead_of_profiling_nothing() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let cli = cli(
+            temp_dir.path().join("profile.folded"),
+            fixture().parent().unwrap().join("nope.wasm"),
+            "caller_of_heavy",
+        );
+        let error = profile(&cli).unwrap_err();
+        assert!(error.contains("nope.wasm"), "{error}");
+        assert!(!temp_dir.path().join("profile.folded").exists());
+    }
+
+    /// The stages hand data to each other in the documented order, and a real run now reaches the
+    /// formatter: the file is written and parses as folded stacks.
     #[test]
     fn assembling_the_stages_runs_to_completion() {
         let temp_dir = tempfile::tempdir().unwrap();
         let output_path = temp_dir.path().join("profile.folded");
-        let cli = Cli {
-            wasm: PathBuf::from("fixtures/dwarf_probe/dwarf_probe.wasm"),
-            output: output_path.clone(),
-            fn_name: String::from("caller_of_heavy"),
-            metric: Metric::Cpu,
-            sample_rate: 1000,
-        };
-        profile(&cli);
+        profile(&cli(output_path.clone(), fixture(), "caller_of_heavy")).unwrap();
 
         let collapsed = std::fs::read_to_string(&output_path).unwrap();
         let stacks = OutputFormatter::parse_folded(&collapsed)
             .expect("the pipeline's own output must be valid folded stacks");
-
-        // At least we expect some valid output for the run
-        assert!(!stacks.is_empty(), "WASM ran, so something was costed");
+        assert!(!stacks.is_empty(), "the run must produce a frame");
     }
 }
