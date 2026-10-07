@@ -25,8 +25,8 @@
 use clap::Parser;
 use soroban_cost_profiler::aggregator::ProfileAggregator;
 use soroban_cost_profiler::formatter::OutputFormatter;
-use soroban_cost_profiler::source_map::SourceMapper;
 use soroban_cost_profiler::models::Metric;
+use soroban_cost_profiler::source_map::SourceMapper;
 use soroban_cost_profiler::tracer::{
     ExecutionTracer, ProfilerState, instantiate_module, invoke_function, load_wasm_file,
     parse_module, setup_engine, setup_mock_env,
@@ -36,7 +36,9 @@ use tracing::warn;
 use wasmi::Val;
 
 fn parse_positive_u32(s: &str) -> Result<u32, String> {
-    let val: u32 = s.parse().map_err(|_| format!("`{}` is not a valid number", s))?;
+    let val: u32 = s
+        .parse()
+        .map_err(|_| format!("`{}` is not a valid number", s))?;
     if val == 0 {
         Err(String::from("must be greater than 0"))
     } else {
@@ -203,9 +205,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let output_path = temp_dir.path().join("profile.folded");
         let cli = Cli {
-            wasm: PathBuf::from(
-                "fixtures/dwarf_probe/dwarf_probe.wasm",
-            ),
+            wasm: PathBuf::from("fixtures/dwarf_probe/dwarf_probe.wasm"),
             output: output_path.clone(),
             fn_name: String::from("caller_of_heavy"),
             metric: Metric::Cpu,
