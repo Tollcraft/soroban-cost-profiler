@@ -251,6 +251,20 @@ the names only when no DWARF is loaded — `name` names a whole function, so it 
 the line table beside it — and `resolve_from_name_section` stays public for a caller that wants the
 coarser answer deliberately. #163 is the write-up of the order.
 
+```mermaid
+flowchart TD
+    Start([Address Lookup]) --> HasDwarf{Has DWARF?}
+    HasDwarf -- Yes --> DwarfResolve[gimli / addr2line]
+    DwarfResolve --> DwarfSuccess{Found?}
+    DwarfSuccess -- Yes --> RetDwarf[Return DWARF Frame]
+    DwarfSuccess -- No --> FallbackName
+    HasDwarf -- No --> FallbackName
+    FallbackName[Search Name Section] --> NameSuccess{Found?}
+    NameSuccess -- Yes --> RetName[Return Name Frame]
+    NameSuccess -- No --> FallbackWasm
+    FallbackWasm[Aggregator Fallback] --> RetWasm["Return wasm[pc]"]
+```
+
 Loading changed with it: `SourceMapper::new` now accepts a binary whose only symbols are names, so
 `MissingDebugInfo` means *neither* source is usable. The `wasm-opt`-without-`-g` artifact still loads
 (and still resolves nothing, because its surviving DWARF describes pre-optimization code) — that case
