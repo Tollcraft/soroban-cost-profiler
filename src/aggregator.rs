@@ -68,6 +68,8 @@ fn open_node(frame: SourceFrame) -> CallStackNode {
         inclusive_cpu: 0,
         exclusive_mem: 0,
         inclusive_mem: 0,
+        exclusive_hostcalls: 0,
+        inclusive_hostcalls: 0,
         children: HashMap::new(),
     }
 }
@@ -121,6 +123,9 @@ fn close(frame: CallStackNode, open: &mut [CallStackNode], roots: &mut Vec<CallS
 fn merge(into: &mut CallStackNode, from: CallStackNode) {
     into.exclusive_cpu = into.exclusive_cpu.saturating_add(from.exclusive_cpu);
     into.exclusive_mem = into.exclusive_mem.saturating_add(from.exclusive_mem);
+    into.exclusive_hostcalls = into
+        .exclusive_hostcalls
+        .saturating_add(from.exclusive_hostcalls);
 
     for (key, child) in from.children {
         match into.children.get_mut(&key) {
@@ -138,19 +143,22 @@ fn merge(into: &mut CallStackNode, from: CallStackNode) {
 /// `inclusive` is defined as exclusive cost plus everything the frame caused to run, so deriving
 /// it from the finished tree cannot double-count a merged frame, and the invariant
 /// `inclusive == exclusive + sum(children.inclusive)` holds at every node by construction.
-fn compute_inclusive(node: &mut CallStackNode) -> (u64, u64) {
+fn compute_inclusive(node: &mut CallStackNode) -> (u64, u64, u64) {
     let mut cpu = node.exclusive_cpu;
     let mut mem = node.exclusive_mem;
+    let mut hostcalls = node.exclusive_hostcalls;
 
     for child in node.children.values_mut() {
-        let (child_cpu, child_mem) = compute_inclusive(child);
+        let (child_cpu, child_mem, child_hostcalls) = compute_inclusive(child);
         cpu = cpu.saturating_add(child_cpu);
         mem = mem.saturating_add(child_mem);
+        hostcalls = hostcalls.saturating_add(child_hostcalls);
     }
 
     node.inclusive_cpu = cpu;
     node.inclusive_mem = mem;
-    (cpu, mem)
+    node.inclusive_hostcalls = hostcalls;
+    (cpu, mem, hostcalls)
 }
 
 /// Combine top-level frames into the single tree this stage returns.
@@ -267,7 +275,9 @@ impl ProfileAggregator {
                 }
                 EventType::HostCall => {
                     charge(&mut open, event.cpu_cost, event.mem_cost);
-                    open.push(open_node(host_frame(event.pc)));
+                    let mut node = open_node(host_frame(event.pc));
+                    node.exclusive_hostcalls = 1;
+                    open.push(node);
                 }
                 // Both return kinds charge the frame that is ending, then hand it to its parent.
                 EventType::HostReturn | EventType::Return => {

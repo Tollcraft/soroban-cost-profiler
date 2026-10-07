@@ -25,7 +25,7 @@
 use clap::Parser;
 use soroban_cost_profiler::aggregator::ProfileAggregator;
 use soroban_cost_profiler::formatter::OutputFormatter;
-use soroban_cost_profiler::models::TraceEvent;
+use soroban_cost_profiler::models::{Metric, TraceEvent};
 use soroban_cost_profiler::source_map::SourceMapper;
 use soroban_cost_profiler::tracer::{
     ExecutionTracer, ProfilerState, instantiate_module, invoke_function, load_wasm_file,
@@ -54,6 +54,10 @@ pub struct Cli {
     /// Sampling rate
     #[arg(long, default_value_t = 1000)]
     pub sample_rate: u32,
+
+    /// Cost metric the `.folded` counts are written in
+    #[arg(long, value_enum, default_value_t = Metric::Cpu)]
+    pub metric: Metric,
 }
 
 /// Stage 1: build a tracer carrying the CLI's sampling rate and the MVP instruction ceiling.
@@ -173,7 +177,7 @@ fn profile(cli: &Cli) -> Result<(), String> {
     let call_tree = aggregator.aggregate(events, &mapper);
 
     // 4. Format and output
-    let output = OutputFormatter::to_collapsed_stack(&call_tree);
+    let output = OutputFormatter::to_collapsed_stack(&call_tree, &cli.metric);
     std::fs::write(&cli.output, output).map_err(|error| {
         format!(
             "failed to write folded stack to {}: {error}",
@@ -212,6 +216,7 @@ mod tests {
             output,
             fn_name: fn_name.into(),
             sample_rate: 1000,
+            metric: Metric::Cpu,
         }
     }
 
