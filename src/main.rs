@@ -22,13 +22,13 @@
 //!
 //! [`TraceEvent`]: soroban_cost_profiler::models::TraceEvent
 //! [`CallStackNode`]: soroban_cost_profiler::models::CallStackNode
+use clap::Parser;
 use soroban_cost_profiler::aggregator::ProfileAggregator;
 use soroban_cost_profiler::formatter::OutputFormatter;
 use soroban_cost_profiler::source_map::SourceMapper;
 use soroban_cost_profiler::tracer::ExecutionTracer;
-use tracing::warn;
-use clap::Parser;
 use std::path::PathBuf;
+use tracing::warn;
 
 /// Soroban Cost Profiler
 #[derive(Parser, Debug)]
@@ -43,7 +43,7 @@ pub struct Cli {
     pub output: PathBuf,
 
     /// Target function to invoke
-    
+
     #[arg(long = "fn", default_value = "")]
     pub fn_name: String,
 
@@ -101,11 +101,18 @@ fn profile(cli: &Cli) {
 
     // 4. Format and output
     let output = OutputFormatter::to_collapsed_stack(&call_tree);
-    
+
     if let Err(e) = std::fs::write(&cli.output, output) {
-        tracing::error!("Failed to write folded stack to {}: {}", cli.output.display(), e);
+        tracing::error!(
+            "Failed to write folded stack to {}: {}",
+            cli.output.display(),
+            e
+        );
     } else {
-        tracing::info!("Successfully wrote folded stack to {}", cli.output.display());
+        tracing::info!(
+            "Successfully wrote folded stack to {}",
+            cli.output.display()
+        );
     }
 }
 
