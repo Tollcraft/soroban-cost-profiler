@@ -118,33 +118,32 @@ fn profile(cli: &Cli) {
     let mut store = wasmi::Store::new(&engine, state);
     store.set_fuel(u64::MAX).unwrap();
 
-    let instance = match instantiate_module(&engine, &mut store, &module) {
-        Ok(inst) => inst,
+    match instantiate_module(&engine, &mut store, &module) {
+        Ok(instance) => {
+            let func_name = if cli.fn_name.is_empty() {
+                "test"
+            } else {
+                &cli.fn_name
+            };
+
+            if let Some(func) = instance.get_func(&store, func_name) {
+                let ty = func.ty(&store);
+                let mut results = vec![Val::I32(0); ty.results().len()];
+
+                if let Err(e) = invoke_function(&mut store, &instance, func_name, &[], &mut results)
+                {
+                    tracing::error!("Execution failed: {}", e);
+                }
+            } else {
+                tracing::error!("Function '{}' not found in module", func_name);
+            }
+        }
         Err(e) => {
             tracing::error!("Failed to instantiate module: {}", e);
-            std::process::exit(1);
         }
-    };
-
-    let func_name = if cli.fn_name.is_empty() {
-        "test"
-    } else {
-        &cli.fn_name
-    };
-
-    let func = instance.get_func(&store, func_name).unwrap_or_else(|| {
-        tracing::error!("Function '{}' not found in module", func_name);
-        std::process::exit(1);
-    });
-
-    let ty = func.ty(&store);
-    let mut results = vec![Val::I32(0); ty.results().len()];
-
-    if let Err(e) = invoke_function(&mut store, &instance, func_name, &[], &mut results) {
-        tracing::error!("Execution failed: {}", e);
     }
 
-    let events = store.data_mut().tracer.flush_trace();
+    let events = store.into_data().tracer.flush_trace();
 
     // 2. Load DWARF source map
     let mapper = load_source_mapper(&wasm_bytes);
