@@ -110,6 +110,30 @@ fn unknown_export(fn_name: &str, module: &wasmi::Module) -> String {
     }
 }
 
+/// What one traced run produced: the boundaries it crossed, the values it returned, and the trap
+/// that ended it if it did not finish.
+///
+/// `trapped` is a field rather than an `Err` because the two outcomes it separates need different
+/// handling downstream: the trace has to reach aggregation (#173's requirement that a panicking
+/// contract still yields a flamegraph up to that point), while the failure still has to reach the
+/// user and the exit status. Returning `Err` would discard the trace, and returning `Ok` with no
+/// trap marker would report a half-executed contract as a complete profile.
+#[derive(Debug)]
+struct TargetRun {
+    events: Vec<TraceEvent>,
+    /// The callee's own return values, empty when the run did not reach its end.
+    ///
+    /// The CLI itself has no use for them — a `.folded` file is the deliverable — but they are the
+    /// only evidence that distinguishes a completed run from one that never started (see
+    /// [`run_target`]), so the tests read them and the field has to exist outside `cfg(test)`.
+    #[allow(
+        dead_code,
+        reason = "read by the stage-1 tests as the proof that the export executed"
+    )]
+    values: Vec<Val>,
+    trapped: Option<String>,
+}
+
 /// Stage 1, executed: instantiate `wasm_bytes`, invoke `fn_name`, and hand back the trace it
 /// produced next to the function's own return values.
 ///
@@ -120,14 +144,22 @@ fn unknown_export(fn_name: &str, module: &wasmi::Module) -> String {
 /// tests below assert.
 ///
 /// Every failure returns a message rather than calling `process::exit`, so the failure paths stay
-/// testable and `main` remains the only place that decides how to report them. A trap mid-call is
-/// reported and *not* flushed as a partial trace: that is #173's job, and until it lands the
-/// partial trace would hold nothing but zero-cost boundaries anyway.
+/// testable and `main` remains the only place that decides how to report them. The two ways a run
+/// fails are kept apart on purpose:
+///
+/// - **Nothing ran** (unparsable bytes, unknown export, instantiation error) is an `Err` and yields
+///   no trace. Instantiation executes the module's start section and host imports, and the traced
+///   function never begins, so any file written from that path would be a profile of a call that
+///   was not made.
+/// - **It ran and trapped** is an `Ok` carrying the partial trace plus [`TargetRun::trapped`],
+///   because the boundaries crossed before the panic are exactly the data #173 asks to keep. The
+///   trap is still reported — see [`profile`], which writes the file and then fails the
+///   invocation, so a truncated profile never looks like a finished one.
 fn run_target(
     wasm_bytes: &[u8],
     fn_name: &str,
     tracer: ExecutionTracer,
-) -> Result<(Vec<TraceEvent>, Vec<Val>), String> {
+) -> Result<TargetRun, String> {
     let engine = setup_engine();
     let module = parse_module(&engine, wasm_bytes)
         .map_err(|error| format!("failed to parse WASM module: {error}"))?;
@@ -145,13 +177,8 @@ fn run_target(
         .set_fuel(u64::MAX)
         .map_err(|error| format!("failed to enable fuel metering: {error}"))?;
 
-    let instance = match instantiate_module(&engine, &mut store, &module) {
-        Ok(inst) => inst,
-        Err(error) => {
-            tracing::error!("Failed to instantiate module: {error}");
-            return Ok((store.into_data().tracer.flush_trace(), vec![]));
-        }
-    };
+    let instance = instantiate_module(&engine, &mut store, &module)
+        .map_err(|error| format!("failed to instantiate module: {error}"))?;
 
     // Sized and typed from the signature: a contract returning `u64` gets an `I64` slot, and a
     // void one runs on an empty buffer.
@@ -164,17 +191,21 @@ fn run_target(
         .map(|ty| Val::default_for_ty(*ty))
         .collect();
 
-    let values = match invoke_function(&mut store, &instance, fn_name, &[], &mut results) {
-        Ok(()) => {
-            tracing::info!("WASM execution completed successfully.");
-            results
-        }
-        Err(error) => {
-            tracing::error!("WASM execution trapped/panicked: {error}. Flushing partial trace.");
-            vec![] // Return empty values, but we still flush below
-        }
+    // A trap leaves `results` untouched — the function never returned — so the run reports no
+    // values and names the trap, while the events recorded up to the trap go to aggregation.
+    let trapped = invoke_function(&mut store, &instance, fn_name, &[], &mut results)
+        .err()
+        .map(|error| error.to_string());
+    let values = if trapped.is_some() {
+        Vec::new()
+    } else {
+        results
     };
-    Ok((store.into_data().tracer.flush_trace(), values))
+    Ok(TargetRun {
+        events: store.into_data().tracer.flush_trace(),
+        values,
+        trapped,
+    })
 }
 
 /// Run the whole pipeline for one CLI invocation: write the folded stack to `--output` and print
@@ -185,18 +216,26 @@ fn run_target(
 /// what the engine hook reports — which is why the folded output names `wasm[0]` and nothing else,
 /// and why the summary today usually says that nothing was costed rather than lying with an
 /// empty table.
+///
+/// A contract that traps mid-call is #173's case: the partial trace is aggregated and written,
+/// because the frames it crossed before the panic are the profile the user came for, and the
+/// invocation then fails with the trap. The order matters in both directions. Failing before the
+/// write loses the data; succeeding after it leaves a truncated profile indistinguishable from a
+/// complete one, which is how a profiler reports a contract that never finished. The summary is
+/// skipped on that path — ranking five zero-cost frames of a run that stopped early is noise next
+/// to the message that says it stopped early.
 fn profile(cli: &Cli) -> Result<(), String> {
     // 1. Read the contract and run the target export under the tracer.
     let wasm_bytes = load_wasm_file(&cli.wasm.to_string_lossy())
         .map_err(|error| format!("failed to read {}: {error}", cli.wasm.display()))?;
-    let (events, _values) = run_target(&wasm_bytes, &cli.fn_name, initialize_tracer(cli))?;
+    let run = run_target(&wasm_bytes, &cli.fn_name, initialize_tracer(cli))?;
 
     // 2. Load DWARF source map
     let mapper = load_source_mapper(&wasm_bytes);
 
     // 3. Aggregate events into call tree
     let mut aggregator = initialize_aggregator();
-    let call_tree = aggregator.aggregate(events, &mapper);
+    let call_tree = aggregator.aggregate(run.events, &mapper);
 
     // 4. Format and output
     let output = OutputFormatter::to_collapsed_stack(&call_tree, &cli.metric);
@@ -206,6 +245,15 @@ fn profile(cli: &Cli) -> Result<(), String> {
             cli.output.display()
         )
     })?;
+
+    if let Some(trap) = run.trapped {
+        return Err(format!(
+            "'{fn}' trapped: {trap}. The partial trace up to the trap is in {path}, and its costs \
+             are incomplete because the call never returned.",
+            fn = cli.fn_name,
+            path = cli.output.display()
+        ));
+    }
 
     let ranked = OutputFormatter::top_functions(&call_tree, &cli.metric, TOP_FUNCTIONS);
     println!(
@@ -262,12 +310,14 @@ mod tests {
     /// the number the contract computes rather than the shape of the trace.
     #[test]
     fn the_named_export_is_invoked_and_its_result_returned() {
-        let (events, values) = run_target(FIXTURE, "caller_of_heavy", tracer()).unwrap();
+        let run = run_target(FIXTURE, "caller_of_heavy", tracer()).unwrap();
         assert!(
-            matches!(values.as_slice(), [Val::I64(value)] if *value == CALLER_OF_HEAVY),
-            "the run must return the value the contract computes, got {values:?}"
+            matches!(run.values.as_slice(), [Val::I64(value)] if *value == CALLER_OF_HEAVY),
+            "the run must return the value the contract computes, got {:?}",
+            run.values
         );
-        let kinds: Vec<&EventType> = events.iter().map(|event| &event.event_type).collect();
+        assert!(run.trapped.is_none(), "a completed run reports no trap");
+        let kinds: Vec<&EventType> = run.events.iter().map(|event| &event.event_type).collect();
         assert!(
             kinds.contains(&&EventType::Call) && kinds.contains(&&EventType::Return),
             "the run must cross both boundaries, not just report a value: {kinds:?}"
@@ -316,5 +366,91 @@ mod tests {
         let stacks = OutputFormatter::parse_folded(&collapsed)
             .expect("the pipeline's own output must be valid folded stacks");
         assert!(!stacks.is_empty(), "the run must produce a frame");
+    }
+
+    /// `(module (func (export "boom") unreachable))` — the smallest contract that traps.
+    ///
+    /// Written as section bytes rather than built by a toolchain, the same way `source_map.rs`'s
+    /// tests synthesize modules: a fixture that needs `wasm32-unknown-unknown` to exist cannot run
+    /// in `cargo test` on a machine without it, and #173 is about the trap path, not about what
+    /// traps. Bytes, in order: 8-byte header; type section (one `() -> {}` function type); function
+    /// section (function 0 has type 0); export section (`"boom"` = func 0); code section (body of
+    /// `unreachable` + `end`).
+    const BOOM: &[u8] = b"\x00\x61\x73\x6d\x01\x00\x00\x00\x01\x04\x01\x60\x00\x00\x03\x02\x01\x00\x07\x08\x01\x04boom\x00\x00\x0a\x05\x01\x03\x00\x00\x0b";
+
+    /// The #173 requirement at the stage-1 boundary: a trap keeps the boundaries it crossed and
+    /// says it trapped, instead of either discarding the trace or reporting a complete run.
+    ///
+    /// The last assertion is a measurement, not an expectation. `wasmi`'s call hook fires
+    /// `ReturningFromWasm` while the trap unwinds, so a call that never returned still closes its
+    /// frame in the trace. That is why the trap cannot live in the event stream alone — a profile
+    /// built from this trace is structurally indistinguishable from one where the call finished, so
+    /// `trapped` has to travel beside the events and be reported by the CLI.
+    #[test]
+    fn a_trapping_contract_keeps_its_partial_trace_and_reports_the_trap() {
+        let run = run_target(BOOM, "boom", tracer()).unwrap();
+        assert!(
+            run.trapped.is_some(),
+            "the run must record that it did not finish"
+        );
+        assert!(run.values.is_empty(), "a trapped call returns no values");
+        let kinds: Vec<&EventType> = run.events.iter().map(|event| &event.event_type).collect();
+        assert!(
+            kinds.contains(&&EventType::Call),
+            "the call that trapped was still crossed, so its boundary belongs in the trace: {kinds:?}"
+        );
+        assert!(
+            kinds.contains(&&EventType::Return),
+            "measured behavior: the hook emits a Return while the trap unwinds, so the trace \
+             alone cannot tell a truncated call from a finished one: {kinds:?}"
+        );
+    }
+
+    /// #173's "done": the CLI outputs a partial stack when a contract panics. The file is what the
+    /// user asked for, so it is written *before* the failure is reported — and the failure is still
+    /// reported, because a truncated profile that exits 0 is indistinguishable from a finished one.
+    #[test]
+    fn a_trapped_run_writes_a_parseable_partial_profile_and_fails() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let output_path = temp_dir.path().join("boom.folded");
+        let temp_wasm = temp_dir.path().join("boom.wasm");
+        std::fs::write(&temp_wasm, BOOM).unwrap();
+
+        let error = profile(&cli(output_path.clone(), temp_wasm, "boom")).unwrap_err();
+        assert!(
+            error.contains("trapped") && error.contains("boom.folded"),
+            "the message must name the failure and the file that holds the partial trace: {error}"
+        );
+        let collapsed = std::fs::read_to_string(&output_path).unwrap();
+        let stacks = OutputFormatter::parse_folded(&collapsed)
+            .expect("a partial trace must still be a valid folded stack file");
+        assert!(!stacks.is_empty(), "the partial run must produce a frame");
+    }
+
+    /// The other half of the split: a module that cannot be instantiated never runs the target
+    /// export, so a profile of it would be a profile of a call that was never made.
+    ///
+    /// `NEEDS_HOST` is `(module (import "env" "missing" (func)) (func (export "boom") unreachable))`
+    /// — it parses fine and then fails to instantiate, because `instantiate_module` links against an
+    /// empty `Linker`. Truncating bytes instead would have tested the parse path, which is a
+    /// different branch of the same rule.
+    #[test]
+    fn a_module_that_fails_to_instantiate_writes_no_profile() {
+        const NEEDS_HOST: &[u8] = b"\x00\x61\x73\x6d\x01\x00\x00\x00\x01\x04\x01\x60\x00\x00\x02\x0f\x01\x03env\x07missing\x00\x00\x03\x02\x01\x00\x07\x08\x01\x04boom\x00\x01\x0a\x05\x01\x03\x00\x00\x0b";
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let output_path = temp_dir.path().join("broken.folded");
+        let temp_wasm = temp_dir.path().join("broken.wasm");
+        std::fs::write(&temp_wasm, NEEDS_HOST).unwrap();
+
+        let error = profile(&cli(output_path.clone(), temp_wasm, "boom")).unwrap_err();
+        assert!(
+            error.contains("instantiate"),
+            "the failure must say the module never ran, not just that something went wrong: {error}"
+        );
+        assert!(
+            !output_path.exists(),
+            "a run that never started must not leave a profile behind"
+        );
     }
 }
