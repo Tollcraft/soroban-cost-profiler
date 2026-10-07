@@ -31,14 +31,25 @@ use soroban_cost_profiler::tracer::{
     ExecutionTracer, ProfilerState, instantiate_module, invoke_function, load_wasm_file,
     parse_module, setup_engine, setup_mock_env,
 };
+use std::io::IsTerminal;
 use std::path::PathBuf;
 use tracing::warn;
 use wasmi::{ExternType, Val};
 
+/// `value_parser` for `--sample-rate`: accept a positive count, refuse everything else.
+///
+/// Zero is the case that matters. `ExecutionTracer::record_step` throttles by comparing
+/// `current_step_cost >= sample_rate`, so a rate of 0 makes that true on every instruction and
+/// silently turns sampling off — the trace then buffers one event per instruction up to the 100M
+/// ceiling, which is the OOM `AGENTS.md` rule 5 exists to prevent. Rejecting it at the flag means the
+/// run never starts, rather than starting and dying later with no explanation.
+///
+/// The two failures get different messages because they are different mistakes: a typo like `abc`
+/// needs the offending text quoted back, while `0` is a well-formed number whose meaning is illegal.
 fn parse_positive_u32(s: &str) -> Result<u32, String> {
     let val: u32 = s
         .parse()
-        .map_err(|_| format!("`{}` is not a valid number", s))?;
+        .map_err(|_| format!("`{s}` is not a valid number"))?;
     if val == 0 {
         Err(String::from("must be greater than 0"))
     } else {
@@ -62,7 +73,7 @@ pub struct Cli {
     #[arg(long = "fn", default_value = "")]
     pub fn_name: String,
 
-    /// Sampling rate
+    /// Record one trace event every N instructions (must be greater than 0)
     #[arg(long, default_value_t = 1000, value_parser = parse_positive_u32)]
     pub sample_rate: u32,
 
@@ -70,6 +81,12 @@ pub struct Cli {
     #[arg(long, value_enum, default_value_t = Metric::Cpu)]
     pub metric: Metric,
 }
+
+/// How many functions the terminal summary ranks (#181's "top 5").
+///
+/// A constant and not a flag: the summary is a glance at the run, the `.folded` file is the
+/// artifact, and a reader who wants the whole ranking has the file.
+const TOP_FUNCTIONS: usize = 5;
 
 /// Stage 1: build a tracer carrying the CLI's sampling rate and the MVP instruction ceiling.
 fn initialize_tracer(cli: &Cli) -> ExecutionTracer {
@@ -169,11 +186,14 @@ fn run_target(
     Ok((store.data_mut().tracer.flush_trace(), values))
 }
 
-/// Run the whole pipeline for one CLI invocation and write the folded stack to `--output`.
+/// Run the whole pipeline for one CLI invocation: write the folded stack to `--output` and print
+/// the ranked summary to stdout.
 ///
 /// Stage 1 is now a real run of the contract named by `--fn`, so the tree it aggregates is the
 /// boundaries that run crossed. The costs in it are still all zero — see [`run_target`]'s note on
-/// what the engine hook reports — which is why the folded output names `wasm[0]` and nothing else.
+/// what the engine hook reports — which is why the folded output names `wasm[0]` and nothing else,
+/// and why the summary today usually says that nothing was costed rather than lying with an
+/// empty table.
 fn profile(cli: &Cli) -> Result<(), String> {
     // 1. Read the contract and run the target export under the tracer.
     let wasm_bytes = load_wasm_file(&cli.wasm.to_string_lossy())
@@ -194,7 +214,14 @@ fn profile(cli: &Cli) -> Result<(), String> {
             "failed to write folded stack to {}: {error}",
             cli.output.display()
         )
-    })
+    })?;
+
+    let ranked = OutputFormatter::top_functions(&call_tree, &cli.metric, TOP_FUNCTIONS);
+    println!(
+        "{}",
+        OutputFormatter::to_top_summary(&ranked, &cli.metric, std::io::stdout().is_terminal())
+    );
+    Ok(())
 }
 
 /// Run the pipeline, reporting any failure on stderr instead of leaving the user a silent exit.
@@ -298,5 +325,65 @@ mod tests {
         let stacks = OutputFormatter::parse_folded(&collapsed)
             .expect("the pipeline's own output must be valid folded stacks");
         assert!(!stacks.is_empty(), "the run must produce a frame");
+    }
+
+    /// Parse argv the way `main` does, so a test fails when the flag itself stops working rather
+    /// than when only the helper it calls changes.
+    fn parse(args: &[&str]) -> Result<Cli, String> {
+        let mut argv = vec![
+            "soroban-cost-profiler",
+            "--wasm",
+            "contract.wasm",
+            "--fn",
+            "call",
+        ];
+        argv.extend_from_slice(args);
+        Cli::try_parse_from(argv).map_err(|error| error.render().to_string())
+    }
+
+    /// #182's "done": `--sample-rate 0` returns a descriptive error. Zero is worth the named
+    /// assertion because it is not merely a useless value — it makes the tracer's
+    /// `current_step_cost >= sample_rate` test true every instruction, so an unvalidated zero
+    /// silently disables sampling and grows the trace toward the 100M ceiling.
+    #[test]
+    fn a_zero_sample_rate_is_rejected_and_says_why() {
+        let error = parse(&["--sample-rate", "0"]).unwrap_err();
+        assert!(
+            error.contains("--sample-rate")
+                && error.contains("'0'")
+                && error.contains("greater than 0"),
+            "the message must name the flag, the offending value, and the rule: {error}"
+        );
+    }
+
+    /// A typo and an illegal number are different mistakes, so they must not share a message — a
+    /// user who typed `--sample-rate 1000ms` needs "that is not a number", not "must be > 0".
+    #[test]
+    fn a_non_numeric_sample_rate_is_rejected_as_unparseable() {
+        let error = parse(&["--sample-rate", "1000ms"]).unwrap_err();
+        assert!(
+            error.contains("1000ms") && error.contains("not a valid number"),
+            "{error}"
+        );
+        assert!(
+            !error.contains("greater than 0"),
+            "an unparseable value must not be reported as a range violation: {error}"
+        );
+    }
+
+    /// The parser rejects, so it must also accept: a valid rate reaches the field unchanged and an
+    /// absent flag still defaults to 1000.
+    #[test]
+    fn a_positive_sample_rate_reaches_the_tracer() {
+        assert_eq!(parse(&["--sample-rate", "42"]).unwrap().sample_rate, 42);
+        assert_eq!(parse(&[]).unwrap().sample_rate, 1000);
+    }
+
+    /// A negative rate is not a rate. Clap never hands `parse_positive_u32` the token, so the
+    /// rejection has to come from clap's own argument matching — asserted as an error rather than a
+    /// message, since which of clap's texts applies is its business, not ours.
+    #[test]
+    fn a_negative_sample_rate_is_rejected_too() {
+        assert!(parse(&["--sample-rate", "-1"]).is_err());
     }
 }
