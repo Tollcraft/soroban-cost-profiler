@@ -331,8 +331,12 @@ impl SourceMapper {
 
     /// Computes the ratio of PCs mapping to duplicate or `None` lines and emits a warning if it is highly degenerate.
     fn check_degenerate_mappings(&self) {
-        let Some(code_map) = self.code_map() else { return; };
-        let Some(context) = self.context.as_ref() else { return; };
+        let Some(code_map) = self.code_map() else {
+            return;
+        };
+        let Some(context) = self.context.as_ref() else {
+            return;
+        };
 
         let mut total_sampled = 0;
         let mut missing_or_duplicate = 0;
@@ -342,7 +346,7 @@ impl SourceMapper {
             // Sample every 10th instruction to avoid blocking startup on huge binaries
             for pc in (body.start..body.end).step_by(10) {
                 total_sampled += 1;
-                
+
                 let mut resolved = false;
                 if let Ok(mut frames) = context.find_frames(pc as u64).skip_all_loads()
                     && let Ok(Some(frame)) = frames.next()
@@ -354,7 +358,7 @@ impl SourceMapper {
                         missing_or_duplicate += 1;
                     }
                 }
-                
+
                 if !resolved {
                     missing_or_duplicate += 1;
                 }
