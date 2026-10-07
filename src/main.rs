@@ -87,7 +87,7 @@ fn initialize_aggregator() -> ProfileAggregator {
 /// executed, so the tracer flushes nothing and the result is one zero-cost frame. Flag parsing
 /// (`--wasm`, `--output`) is Phase 5, which replaces the empty trace with a real run and writes
 /// this return value to disk.
-fn profile() -> String {
+fn profile(cli: &Cli) {
     // 1. Initialize tracer and execute WASM
     let mut tracer = initialize_tracer();
     let events = tracer.flush_trace();
@@ -100,15 +100,20 @@ fn profile() -> String {
     let call_tree = aggregator.aggregate(events, &mapper);
 
     // 4. Format and output
-    OutputFormatter::to_collapsed_stack(&call_tree)
+    let output = OutputFormatter::to_collapsed_stack(&call_tree);
+    
+    if let Err(e) = std::fs::write(&cli.output, output) {
+        tracing::error!("Failed to write folded stack to {}: {}", cli.output.display(), e);
+    } else {
+        tracing::info!("Successfully wrote folded stack to {}", cli.output.display());
+    }
 }
 
 /// Print the MVP notice and run the harness.
 fn main() {
-    let _cli = Cli::parse();
-    let _cli = Cli::parse();
+    let cli = Cli::parse();
     println!("soroban-cost-profiler MVP (Not yet implemented)");
-    profile();
+    profile(&cli);
 }
 
 #[cfg(test)]
@@ -120,8 +125,17 @@ mod tests {
     /// is legal input for the whole pipeline: it ends as one zero-cost, unresolved frame.
     #[test]
     fn assembling_the_stages_runs_to_completion() {
-        let collapsed = profile();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let output_path = temp_dir.path().join("profile.folded");
+        let cli = Cli {
+            wasm: PathBuf::new(),
+            output: output_path.clone(),
+            fn_name: String::new(),
+            sample_rate: 1000,
+        };
+        profile(&cli);
 
+        let collapsed = std::fs::read_to_string(&output_path).unwrap();
         let stacks = OutputFormatter::parse_folded(&collapsed)
             .expect("the pipeline's own output must be valid folded stacks");
         assert_eq!(
