@@ -51,3 +51,7 @@ tempfile = "3.27.0"
 [[bench]]
 name = "tracer_benchmark"
 harness = false
+
+[[bench]]
+name = "source_map_benchmark"
+harness = false
