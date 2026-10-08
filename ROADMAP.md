@@ -231,3 +231,32 @@ rather than "solved" with a cosmetic diff:
   `the_instruction_ceiling_does_not_stop_execution`.
 - **A trapped run keeps its trace.** An out-of-fuel contract still yields the boundaries crossed
   before the trap, which is what Phase 5's panic handling needs.
+
+## Documentation Upkeep (post-MVP)
+
+- [x] **Refresh command for README's contributor grid:** `CONTRIBUTING.md` gains a "Keeping the contributor
+  grid current" section, because the grid is a **dated snapshot** — fifteen `<img>` tiles served by
+  `github.com/<login>.png`, plus a sentence naming how many people are listed and the day the list was read —
+  and nothing refreshed it. Without a rule, the sixteenth contributor lands into a README that has quietly
+  stopped being true, and the next person "fixes" it by hand-adding a tile, which is a claim with no command
+  behind it. The section names who owns the refresh (the PR that lands someone's first contribution), gives the
+  exact command, and forbids the two edits that would make the list unverifiable: adding a name by hand and
+  re-sorting the output. **The command is verified rather than written to look plausible:** run on 2026-10-08 it
+  prints the fifteen lines already in `README.md` **byte for byte**, and that equality is documented as the check
+  to redo if the command itself is ever edited. Four of its properties are recorded as load-bearing, each
+  because a later cleanup would break it silently: the order and the grouping are the endpoint's, which counts per
+  GitHub *account* — so `wagmiiii` appears once at 71 where `main`'s own history shows three author names
+  (`adajala`, `Ademola`, `WAGMI`) under two addresses that sum to exactly those 71,
+  `git log --format='%ae' origin/main | grep -cE 'ademola2993k@gmail.com|130152505'`, while `git shortlog` would
+  render one maintainer as three contributors; a `type != "Bot"` filter alone would **not** drop `web-flow`,
+  because GitHub's merge bot reports `"type": "User"` with one commit, so it is excluded by name as well; the
+  avatars stay GitHub-served so every tile is checkable by clicking it; and `per_page=100` is the endpoint's page
+  cap, so a hundredth-and-beyond contributor needs `--paginate` — eighty-five contributors away today, noted so
+  nobody truncates the grid without meaning to. What was **deliberately not** done, with the reason in the
+  section: a third-party dynamic contributors badge, and a scheduled Action that regenerates the block and opens
+  a PR. Both are less honest for the same reason — the first substitutes another service's cache and definition of
+  "contributor" for this repository's own history, and the second needs a workflow that cannot self-merge past
+  this branch's protection, so its real failure mode is a silently stale grid with automation standing between
+  the reader and noticing. Documentation only: one new `CONTRIBUTING.md` section, no code, no dependency, no CI
+  change; `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings` and
+  `cargo test --workspace` all pass unchanged.
