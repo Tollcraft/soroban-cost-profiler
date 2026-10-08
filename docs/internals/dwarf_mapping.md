@@ -41,6 +41,14 @@ sections, never DWARF ones. Note `Dwarf::load` copies each section into an `Rc<[
 than borrowing the caller's buffer, because the mapper has to outlive the `&[u8]` it was constructed
 from and keep serving lookups for a whole trace.
 
+From `Dwarf::load` downward the stage is one file, `src/source_map/dwarf.rs`, which is the boundary as
+something a reviewer can check instead of something they have to read the code to believe: it holds
+the `gimli` and `addr2line` traversal, the error the stage reports, and the address map `CodeMap`,
+and it is the only file in the stage that names a `gimli` type. The hand-written parsing that does
+exist is all container-level and lives beside the bytes it reads — the section table in `wasm.rs`, the
+`name` subsections in `names.rs`, and the code section's function framing in `CodeMap::parse`, which is
+in `dwarf.rs` because the address map it produces is what a DWARF address means.
+
 ## The address space, which is the part that bites
 
 DWARF line tables in a wasm build are written against **offsets into the code section's payload**:
@@ -206,6 +214,11 @@ closures is one frame in a flamegraph, not a stack of markers. The index survive
 is not part of a run, because two sibling closures in one function are different work and
 `CallStackNode`'s children are keyed by name — flattening both to `[closure]` would pool them into a
 single frame and lose which one spent the fuel.
+
+The rewrite lives in `src/source_map.rs`, not in the `src/source_map/dwarf.rs` module whose
+`frame_name` calls it, because #157's `name`-section path calls the same function on the same shapes:
+a closure has to render identically whichever of the two sources named it, and one shared helper is
+the mechanism behind the claim that they agree.
 
 `{{closure}}`, the spelling #155 names, is legacy mangling. v0 encodes a closure structurally
 (`…13closure_probe5outer0E…` in the same crate's `name` section, the trailing digit being the
@@ -379,6 +392,8 @@ the pair is committed and the big one is not.
   to build modules that no toolchain here can emit.
 * `src/source_map/names.rs` — the `name`-section fallback, and the synthetic-module helpers that pin
   the import offset neither committed fixture can.
+* `src/source_map/dwarf.rs` — the traversal this document describes: `CodeMap`, `SourceMapError`, the
+  `gimli`/`addr2line` loading, and the two `SourceMapper` methods that walk line tables.
 * `docs/spikes/02_wasm_name_section_fallback.md` — what survives `wasm-opt` and `stellar contract
   build`, and the `name`-section layout.
 * `docs/internals/tracer_architecture.md` — why the `pc` reaching this stage is currently always `0`.
