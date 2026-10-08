@@ -31,7 +31,8 @@ from any command line:
 | Frames named `wasm[0]` though the build has DWARF | The hook hands the tracer no program counter | [Every frame is `wasm[0]`](#every-frame-is-wasm0-even-with-dwarf) |
 | `unsymbolized 0` | The trace recorded no boundary at all | [`unsymbolized` frames](#the-file-says-unsymbolized) |
 | A warning about `.debug_info` or `name` | Symbol degraded, run fine — pick which of the three | [Unnamed frames](#frames-are-named-by-address-not-source) |
-| `failed to instantiate module: cannot find definition for import` | A real `soroban-sdk` contract; blocked on #210 | [Host imports](#a-contract-that-imports-host-functions-does-not-run) |
+| `failed to instantiate module: cannot find definition for import` | An import outside the Soroban host interface — the host's own 199 functions link | [Unlinked imports](#an-import-the-profiler-does-not-link) |
+| A `… trapped: wasm unreachable instruction executed` error on an SDK build | A `--args` word the guest could not read as a `Val`, or a host function that needed chain state | [Arguments](#the-export-takes-arguments) |
 | `takes 1 argument (i64); --args gave no values` | The export takes parameters; pass them with `--args` | [Arguments](#the-export-takes-arguments) |
 | `Instruction ceiling exceeded` | The trace-buffer guard tripped at your `--instruction-limit` | [The ceiling](#about-the-100m-instruction-limit) |
 | No records on stderr when you want them | The default level prints none; `-v` installs the transcript | [What the profiler is doing](#i-want-to-see-what-the-profiler-is-doing) |
@@ -49,7 +50,7 @@ wasm[0] 0
 ```
 
 **Why.** `invoke_function`'s hook has no instruction hook to hang a count on, so it substitutes one
-unit-costed step per boundary (`src/tracer.rs:356-360`). `caller_of_heavy` crosses two boundaries — the call
+unit-costed step per boundary (`src/tracer.rs:357-360`). `caller_of_heavy` crosses two boundaries — the call
 in and the return out — and at the default `--sample-rate 1000` the accumulator gains 1 per boundary, so it
 never reaches the threshold that emits an event. The zero is structural, not a small measurement.
 
@@ -78,9 +79,22 @@ no function recorded any exclusive cost (hostcalls)
 
 that is not three separate failures. Memory bytes and host-call counts reach the call tree only through host
 frames: the budget deltas read around a call (`record_host_return`, `src/tracer.rs:176-191`) and the
-`HostCall` events that open them. No host frame can open while nothing links a host function
-([#210](https://github.com/Tollcraft/soroban-cost-profiler/issues/210)), so those two metrics are
-structurally empty today rather than merely small.
+`HostCall` events that open them. The export above calls no host function, so it has no host frame to open
+and the two metrics are empty by construction. An export that does call the host populates all three —
+measured on `fixtures/build.sh`'s artifact, `memory_heavy_loop` at 100 iterations:
+
+```console
+$ soroban-cost-profiler --wasm …/dummy_contract.wasm --fn memory_heavy_loop --args 429496729604 --metric hostcalls
+Top 1 functions by exclusive cost (hostcalls):
+  1. host[0]  102
+$ cat profile.folded
+wasm[0] 0
+wasm[0];host[0] 102
+```
+
+`102` is `vec_new` plus one `vec_push_back` per iteration plus `vec_len`, and the same run reports
+`host[0] 125022` for `--metric cpu` and `host[0] 50080` for `--metric memory`. So a zero in these two columns
+is a statement about the contract, not about the tool: no host call, no number.
 
 ## Every frame is `wasm[0]`, even with DWARF
 
@@ -187,12 +201,17 @@ is a trap on entry, and the usual trap is arity (see
 **What to do.** Read the error, not the file. A `.folded` of `unsymbolized 0` is not a profile of a cheap
 function; it is the shape of a run that did not happen.
 
-## A contract that imports host functions does not run
+## An import the profiler does not link
 
-Not reproducible from the committed fixtures, which import nothing. It *is* reproducible from the 52-byte
-module this repository's own e2e test commits as `NEEDS_HOST` (`tests/cli_e2e.rs`), which is
+A `soroban-sdk` build no longer fails here. Its imports are the positional labels the SDK links against —
+`("v","_")`, `("i","_")`, `("v","6")`, `("v","3")` — and `src/host.rs` registers all 199 entries of
+`soroban-env-host`'s table against the real `Host`, so the contract instantiates, runs, and its host calls
+are traced (`fixtures/build.sh`'s artifact produces `wasm[0];host[0] 125022` for
+`memory_heavy_loop` at 100 iterations). What still fails to link is an import from a module the profiler does
+not bind at all — in practice a JS shim or a hand-written module. It is reproducible from the 52-byte module
+this repository's own e2e test commits as `NEEDS_HOST` (`tests/cli_e2e.rs`), which is
 `(module (import "env" "missing" (func)) (func (export "boom") unreachable))` — the shortest module whose
-import cannot be linked, standing in for the 622 KB contract build that is full of them:
+import cannot be linked:
 
 ```console
 $ soroban-cost-profiler --wasm needs_host.wasm --fn boom
@@ -203,17 +222,28 @@ $ ls boom.folded
 ls: boom.folded: No such file or directory
 ```
 
-**Why.** `instantiate_module` links against an empty `wasmi::Linker` (`src/tracer.rs:289`), so a module
-importing the Soroban environment interface fails to link before its export is called. This is what a real
-`soroban-sdk` build does — its contract imports the host — which is why the README carries the same warning
-in an `IMPORTANT` note.
+**Why.** `instantiate_module` links the Soroban host interface and nothing else (`src/host.rs`), so an import
+whose `(module, name)` pair is not in that table fails before the export is called.
 
-**What to do.** Nothing yet, and note two details so you do not misread the failure: no `.folded` file is
-written on this path (nothing ran, so a file would be a profile of a call that was not made), and the exit
-code is `1`, not `2` — a module this tool cannot link is bad input, not a broken profiler. Wiring the host
-bindings is
-[#210](https://github.com/Tollcraft/soroban-cost-profiler/issues/210). Until it lands, profile
-pure-computation exports.
+**What to do.** Note two details so you do not misread the failure: no `.folded` file is written on this path
+(nothing ran, so a file would be a profile of a call that was not made), and the exit code is `1`, not `2` —
+a module this tool cannot link is bad input, not a broken profiler. Read the `(module,name)` in the message: a
+one-character pair inside `x i m v l d b c a t p` is a host function and should have linked, so it means this
+profiler is older than the bindings; anything else — `env`, `f32`, a JS name — is a module this tool has no
+business standing up.
+
+Two things a *linked* host function can still fail at, and both now surface as a trap inside the run rather
+than as this refusal, which is why they keep the partial trace (#173) instead of writing nothing:
+
+* **Ledger state.** Nothing here gives the contract a ledger to read — no `--state`, no network, no snapshot —
+  so `get`, `put`, `require_auth` and their siblings fail against the unpopulated host. That is
+  [issue 212](https://github.com/Tollcraft/soroban-cost-profiler/issues/212).
+* **Another contract.** `call` and its sibling re-enter the engine in production, which needs a live engine
+  caller; the bound `Env` methods have none, so they return a host error instead of recursing.
+
+And a third that is the user's own command line: an SDK export reads each parameter as a tagged `Val`, so
+`--args 10000` reaches `compute_heavy_loop` as a word whose tag means nothing to the guest and the contract
+aborts — see [The export takes arguments](#the-export-takes-arguments).
 
 ## The export takes arguments
 
@@ -265,15 +295,30 @@ parses). Two limits the flag does not paper over:
   ```
 
   The boundary an SDK export declares *is* `i64` — measured on the `fixtures/build.sh` artifact, whose
-  `compute_heavy_loop` is `(i64) -> i64` and whose host imports are `i64` in and out — so `--args` can satisfy
-  the arity of a real contract's export. What it cannot do is give that number a meaning: the word is a
-  handle into a host the profiler does not link, which is
-  [#210](https://github.com/Tollcraft/soroban-cost-profiler/issues/210) and
-  [#212](https://github.com/Tollcraft/soroban-cost-profiler/issues/212) rather than a flag.
+  `compute_heavy_loop` is `(i64) -> i64` — so `--args` satisfies a real contract's arity. What the flag does
+  not do is tag the value, and the guest reads the word as a `Val`: a `u32` parameter wants `U32Val(10000)`,
+  which is `(10000 << 32) | 4`. Measured on that artifact, the number you would write and the word the
+  contract wants:
+
+  ```console
+  $ soroban-cost-profiler --wasm …/dummy_contract.wasm --fn compute_heavy_loop --args 10000 --output dc.folded
+  error: 'compute_heavy_loop' trapped: wasm `unreachable` instruction executed. The partial trace up to the
+  trap is in dc.folded, and its costs are incomplete because the call never returned.
+  $ echo $?
+  1
+  $ soroban-cost-profiler --wasm …/dummy_contract.wasm --fn compute_heavy_loop --args 42949672960004 --output dc.folded
+  no function recorded any exclusive cost (cpu)
+  $ echo $?
+  0
+  ```
+
+  The arity check cannot tell them apart — both are one `i64` — so the first one runs, and a run that traps
+  keeps the partial trace it collected (#173) instead of refusing. Reading `dc.folded` after the first
+  command is how this mistake gets past you: the file exists, and it is a profile of an aborted call.
 * **Arguments are values, not state.** Nothing here gives the contract a ledger to read; that is
   [issue 212](https://github.com/Tollcraft/soroban-cost-profiler/issues/212).
 
-Both refusals exit `1` and write no file, for the same reason the host-import entry above does: a command
+Both refusals exit `1` and write no file, for the same reason the unlinked-import entry above does: a command
 line that cannot be honoured should not leave behind an artifact that looks like it was. A value `--args`
 cannot parse at all — `--args abc` — is clap's refusal instead of the profiler's, and is in
 [Refused flags](#refused-flags).
@@ -316,7 +361,7 @@ rebuild it.
 ## The output path is wrong, and which exit code it earns
 
 Exit codes are the documented `0` success, `1` "the invocation could not be honoured as asked", `2` "the
-input was accepted and the profiler could not finish its own work" (`src/main.rs:430-449` splits these two on
+input was accepted and the profiler could not finish its own work" (`src/main.rs:433-451` splits these two on
 the error kind, so a path you could never have written to is `1` and a machine refusing a write is `2`):
 
 ```console
@@ -425,7 +470,7 @@ symptoms elsewhere on this page:
 
 - `-v` (`INFO`) — the three stages: load, instantiate, invoke. A run that stops after the first line never
   found a readable module; after the second, it found one that would not link (see
-  [A contract that imports host functions does not run](#a-contract-that-imports-host-functions-does-not-run)).
+  [An import the profiler does not link](#an-import-the-profiler-does-not-link)).
 - `-vv` (`DEBUG`) — every call boundary the engine reports, as `WASM Call at PC: 0` / `WASM Return at PC: 0`.
   Count them: a contract that calls five helpers and reports two boundaries is
   [the profile that is one line of zeros](#the-profile-is-one-line-of-zeros), and the count is the evidence
@@ -556,10 +601,10 @@ does not say, and a reader should know before trusting it:
   reports `ReturningFromWasm`. Only the exit code and this message separate the two, so never read the
   artifact alone as "the call finished".
 * **The counter counts boundaries, not instructions.** Its only caller in the live path is the call hook,
-  which runs once per boundary (`src/tracer.rs:356-360`), and one host-initiated call gives two of them —
+  which runs once per boundary (`src/tracer.rs:357-360`), and one host-initiated call gives two of them —
   which is why `1` halts a function that computes a million instructions and `2` lets it finish. A contract
   that loops forever *inside* one function body emits no boundaries, never advances the counter, and is not
-  stopped — and `wasmi`'s own fuel is set to `u64::MAX` for the run (`src/main.rs:606-610`), so the engine
+  stopped — and `wasmi`'s own fuel is set to `u64::MAX` for the run (`src/main.rs:608-613`), so the engine
   does not stop it either.
 
 So if your symptom is "it hangs" or "my machine ran out of memory", the ceiling message is not the diagnosis,
@@ -570,8 +615,9 @@ and `--instruction-limit` is not the lever either:
   deliver — the guard is real for the tracing buffer it was written to protect (a run with many boundaries
   cannot grow the `Vec` unboundedly, and `--instruction-limit` is what bounds it) and inert against a loop
   that stays inside one body. Profile exports that terminate, and prefer the fixture-sized contracts this
-  repository tests against. Turning the ceiling into an execution bound needs the instruction hook, which is
-  [issue 210](https://github.com/Tollcraft/soroban-cost-profiler/issues/210)'s to land.
+  repository tests against. Turning the ceiling into an execution bound needs a per-instruction hook, and
+  `wasmi` 2.0 — the engine this profiler runs on — has none to expose; no open issue in this repository owns
+  that, so the guard's scope is exactly what the paragraph above describes.
 * **A very large `.folded` file** is not instruction volume either — event count tracks boundaries — so the
   lever you have is the contract you point at, not `--sample-rate`.
 

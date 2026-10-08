@@ -15,4 +15,6 @@ Function boundaries (`TraceEvent::Call` and `TraceEvent::Return`) bypass the sam
 
 ## Soroban Host
 
-The profiler instantiates a native `soroban_env_host::Host` to manage cross-contract calls and ledger state injections. During execution, any host function call that traps into the Soroban environment seamlessly proxies back to our instantiated `Host`.
+The profiler builds a native `soroban_env_host::Host` and registers its whole interface — 199 functions across the eleven one-character Soroban modules — into the `wasmi` linker the module is instantiated against (`src/host.rs`). That is what lets a real `soroban-sdk` build run here at all: the guest's imports resolve, each call crosses into the production host, and the tracer's `CallingHost`/`ReturningFromHost` hooks cost the call from the host's own budget.
+
+Two things the host still cannot give a contract. Ledger and authorization functions fail with a host error against the unpopulated `Host::default`, because nothing has been written into it — that is what a `--state` flag would supply. And `call` (contract-to-contract) returns a host error instead of re-entering the engine, because the `Env` methods here run with no live caller to hand to the host's dispatcher.

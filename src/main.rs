@@ -142,9 +142,12 @@ pub struct Cli {
     /// what it wanted.
     ///
     /// Only integers are accepted, and they are handed over as raw `i64` words. That is enough for an
-    /// `extern "C"` export taking `u64`/`i64`, and it is not enough for an SDK entry point whose
-    /// arguments are object or ledger-heap handles: decoding those needs a host to build them in,
-    /// which is issue 210 and issue 212, not this flag.
+    /// `extern "C"` export taking `u64`/`i64`, and it is nearly enough for an SDK entry point: the real
+    /// Soroban host functions are linked (`src/host.rs`), so a word that already carries a `Val` tag is
+    /// decoded into a live object handle. What this flag does not do is tag for you — an SDK `u32`
+    /// parameter wants `value << 32 | 4` typed out, and the plain number runs until the guest reads a bad
+    /// tag and traps. And an argument the contract expects to *find* in the ledger, rather than receive as
+    /// a word, needs the chain state issue 212's `--state` flag would supply, not this one.
     #[arg(long, value_delimiter = ',', allow_hyphen_values = true)]
     pub args: Vec<i64>,
 

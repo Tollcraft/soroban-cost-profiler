@@ -217,8 +217,11 @@ Speedscope recognises the collapsed-stack format on its own. Load `sr1.folded` a
 problem: check it is the `.folded` and not the `.wasm`.
 
 What you will see is **one bar filling the chart**: `wasm[0]`, the single frame every boundary lands in. That
-is the honest picture of today's engine, and it is what PC attribution
-([issue 210's follow-ups](https://github.com/Tollcraft/soroban-cost-profiler/issues/210)) turns into a tree.
+is the honest picture of today's engine. It is not a gap this repository can close with a flag: a per-frame
+tree needs a program counter at every step, and the engine this profiler runs on (`wasmi` 2.0) reports a cost
+event only at call boundaries — it has no instruction hook to expose, and no open issue here owns one. What
+the profiler *can* attribute is the boundary itself, which is why a real contract's host calls arrive as a
+second frame (`host[0]`) rather than a flat zero — see step 6.
 The viewer is not the missing half — it already draws any stack you give it. Once the same path arrives as
 `wasm[0];total;sum_squares`, the flamegraph is the point of the whole tool: the widest bar is where the
 instructions went, and Left Heavy is the panel that answers "what should I fix first".
@@ -248,29 +251,68 @@ $ echo $?
 This is the repository's own `soroban-sdk` fixture — `fixtures/build.sh` builds it, about 622 KB, and the path
 above is relative to the repository root, because that contract is a member of this workspace and the artifact
 lands in the root's `target/`. Its export list is not the one a reader expects from their own
-`#[contractimpl]` names. Take a function that really is there, and you meet the wall:
+`#[contractimpl]` names. Take a function that really is there, and the profiler asks for its argument:
 
 ```console
 $ soroban-cost-profiler --wasm target/wasm32-unknown-unknown/release/dummy_contract.wasm --fn compute_heavy_loop --output dummy.folded
-error: failed to instantiate module: cannot find definition for import (i,_) with type Func(FuncType { core: FuncType { params: [I64], results: [I64] } })
+error: 'compute_heavy_loop' takes 1 argument (i64); --args gave no values. `--args` is one value per parameter, in the order the signature lists them.
 $ echo $?
 1
 $ ls dummy.folded
 ls: dummy.folded: No such file or directory
 ```
 
-Exit `1`, and **no `.folded` file**, because nothing ran. A `soroban-sdk` build imports the Soroban
-environment interface — here the module `i`, function `_`, taking and returning an `I64` — and this profiler
-links against an empty linker, so the module never instantiates. That is
-[issue 210](https://github.com/Tollcraft/soroban-cost-profiler/issues/210), the single blocker between this
-tutorial and a version of it that profiles your actual contract. Reading ledger state is the other half of
-that gap — [issue 212](https://github.com/Tollcraft/soroban-cost-profiler/issues/212). Taking arguments is
-not: `--args 1000,7` passes `i64` values to an export that declares parameters, and
-[the troubleshooting entry](troubleshooting.md#the-export-takes-arguments) shows both the refusal you get for
-the wrong count and the width a command line cannot name.
+Exit `1`, and **no `.folded` file**, because a run that cannot call the export is a run that measured nothing.
+The host interface is not a wall any more: a `soroban-sdk` build imports the Soroban environment — here the
+module `i`, function `_`, taking and returning an `I64` — and the profiler registers the real host functions
+against that linker, so the module instantiates and the export runs.
 
-So for now, the contracts that profile are the pure-computation ones: the loops, parsers and arithmetic your
-contract is built out of — which is exactly why steps 2 and 3 used a contract with no SDK dependency.
+What the export wants is the *tagged* word, not the number. An SDK entry point reads each parameter as a
+`Val`, and a `Val`'s type tag is its low byte, so a `u32` arrives as `value << 32 | 4`: `10` is
+`42949672964`, `100` is `429496729604`. Hand it the plain number and the guest reads a word whose tag is not
+what it expected and aborts — `error: … trapped: wasm `unreachable` instruction executed`, exit `1`, and a
+partial trace on disk. [The troubleshooting
+entry](troubleshooting.md#the-export-takes-arguments) has both halves of that sentence, measured. With the
+tag in place, the same command runs:
+
+```console
+$ soroban-cost-profiler --wasm target/wasm32-unknown-unknown/release/dummy_contract.wasm --fn memory_heavy_loop --args 429496729604 --output dummy.folded
+Top 1 functions by exclusive cost (cpu):
+  1. host[0]  125022
+
+$ echo $?
+0
+$ cat dummy.folded
+wasm[0] 0
+wasm[0];host[0] 125022
+```
+
+Two frames, and the difference between them is the whole point of profiling a contract like this one.
+`wasm[0]` is the contract's own body; it is `0` because the engine charges a call boundary to the callee, and
+every boundary this run crossed left the wasm into a host function. `wasm[0];host[0]` is those host calls —
+one `vec_new`, 100 `vec_push_back`, one `vec_len` — and asking for the call count instead of the cost makes
+the same shape explicit:
+
+```console
+$ soroban-cost-profiler --wasm …/dummy_contract.wasm --fn memory_heavy_loop --args 429496729604 --metric hostcalls --output host.folded
+$ cat host.folded
+wasm[0] 0
+wasm[0];host[0] 102
+```
+
+A pure-computation export of the same contract shows the other half: `--fn compute_heavy_loop --args
+42949672964` exits `0` and writes exactly `wasm[0] 0`, with the summary saying `no function recorded any
+exclusive cost (cpu)`. That is not a failure — a loop that never crosses into the host has no boundary for
+the engine to attribute, which is the same statement steps 2 and 3 make about a contract with no SDK
+dependency at all.
+
+Two things a real contract can ask for still do not work. Reading and writing ledger state needs a mocked
+chain: these bindings run against an unpopulated host, so an export that calls `require_auth` or a `ledger`
+function fails with a host error instead of finding a record. Giving that host a ledger is
+[issue 212](https://github.com/Tollcraft/soroban-cost-profiler/issues/212). And contract-to-contract `call`
+needs to re-enter the engine, which this profiler never sets up, so those two functions return a host error
+rather than running the callee. Both are named in the bindings' own module documentation, and neither stops
+the run above.
 
 ## 7. Did my change help?
 
@@ -298,7 +340,7 @@ Cost comparison, baseline → current (exclusive cost per function):
 Rows are ranked by the size of the move. The last row is `total`, the **whole-profile sum**, which is the
 number you actually asked for — and here it collides with the export in step 2, which is also called `total`
 and is *not* what that row is: the two files above contain one frame each, `wasm[0]`, and `total` is the sum
-row beneath them (`src/formatter.rs:474-475`). Functions that did not move are left out of the table but
+row beneath them (`src/formatter.rs:475-479`). Functions that did not move are left out of the table but
 counted in the tally line, so an empty table cannot be mistaken for a broken one, and a regression still exits
 `0` — bad news is still an answer. One thing to watch: a `.folded` file records no metric of its own, so both
 sides of a `compare` have to come from runs that agreed on `--metric` already. Nothing can check that for you.

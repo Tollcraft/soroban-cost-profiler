@@ -275,9 +275,10 @@ impl OutputFormatter {
     /// The other two formats answer "where did my contract's cost go"; this answers "what did the
     /// engine actually report", which is why it is the format to reach for when a profile looks wrong
     /// — it shows the zero-cost, `pc = 0` events that aggregation folds into one `wasm[0]` frame, and
-    /// it is the only one of the three whose output changes when #210's instruction hook adds real
-    /// instruction events. It takes no metric for the same reason it takes no summary: nothing has
-    /// been selected out of the stream yet, so a line carries its own `cpu` and `mem` deltas beside
+    /// it is the only one of the three whose output would change if the engine ever reported more than
+    /// call boundaries (`wasmi` 2.0 has no instruction hook, so today every line is one boundary or one
+    /// sampled step, host or wasm). It takes no metric for the same reason it takes no summary: nothing
+    /// has been selected out of the stream yet, so a line carries its own `cpu` and `mem` deltas beside
     /// the kind that produced them.
     ///
     /// Events and not boundaries, because the two are not the same count: `record_call` and

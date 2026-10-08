@@ -17,7 +17,7 @@ issue, say what is left, so nobody merges it believing more than it does. -->
 
 <!-- The commands you ran and what they printed. This is a profiler: its most convincing failure is
 output that looks right, so a claim about behavior needs the transcript, the exit code, or the line
-(`src/tracer.rs:352-356`) it came from. If a number is read out of the code rather than measured,
+(`src/tracer.rs:357-360`) it came from. If a number is read out of the code rather than measured,
 say which it is. -->
 
 - [ ] `cargo fmt --all -- --check`

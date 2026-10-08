@@ -279,8 +279,8 @@ pub enum Metric {
 /// artifact cannot be silently diffed against a run that disagreed on `--metric` the way two
 /// `.folded` files can. `raw` is the event stream before aggregation, which is the only one of the
 /// three that shows a reader what the engine actually reported — one line per recorded event, no
-/// source names, no tree — and therefore the only one whose output changes when #210's instruction
-/// hook lands.
+/// source names, no tree — and therefore the only one whose output grows with the engine's own
+/// reporting, rather than with the aggregation the other two run on top of it.
 #[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Format {
     Folded,

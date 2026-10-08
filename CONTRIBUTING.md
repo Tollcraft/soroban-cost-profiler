@@ -124,7 +124,7 @@ the issue.
 * **A `ROADMAP.md` box checked in the same branch.**
 * **Claims backed by a command you ran.** This is a profiler: its most convincing failure is output that
   looks right. A transcript quoted in `README.md` or `docs/` should be the one a built binary of that branch
-  actually printed, and a statement about behavior should cite the line (`src/tracer.rs:356-360`) so the next
+  actually printed, and a statement about behavior should cite the line (`src/tracer.rs:357-360`) so the next
   reader — and the next refactor — can check it. If a number is read out of the code rather than measured,
   say which it is.
 * **Tests of behavior, not of your implementation.** A CLI change is tested by running the built binary as a
