@@ -1,0 +1,53 @@
+{
+  "protocol_version": 28,
+  "sequence_number": 500,
+  "timestamp": 1700000000,
+  "network_id": "0000000000000000000000000000000000000000000000000000000000000000",
+  "base_reserve": 100,
+  "min_persistent_entry_ttl": 4096,
+  "min_temp_entry_ttl": 16,
+  "max_entry_ttl": 631200,
+  "ledger_entries": [
+    {
+      "entry": {
+        "last_modified_ledger_seq": 400,
+        "data": {
+          "contract_data": {
+            "ext": "v0",
+            "contract": "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA",
+            "key": {
+              "symbol": "COUNT"
+            },
+            "durability": "persistent",
+            "val": {
+              "u32": 42
+            }
+          }
+        },
+        "ext": "v0"
+      },
+      "live_until": 100000
+    },
+    {
+      "entry": {
+        "last_modified_ledger_seq": 400,
+        "data": {
+          "account": {
+            "account_id": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+            "balance": "1000000000",
+            "seq_num": "1",
+            "num_sub_entries": 0,
+            "inflation_dest": null,
+            "flags": 0,
+            "home_domain": "",
+            "thresholds": "01010101",
+            "signers": [],
+            "ext": "v0"
+          }
+        },
+        "ext": "v0"
+      },
+      "live_until": null
+    }
+  ]
+}

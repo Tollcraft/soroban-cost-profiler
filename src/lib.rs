@@ -3,6 +3,7 @@ pub mod formatter;
 pub mod host;
 pub mod models;
 pub mod source_map;
+pub mod state;
 pub mod tracer;
 
 #[cfg(test)]

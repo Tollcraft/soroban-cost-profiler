@@ -5,6 +5,7 @@
 * **Language:** Rust (to integrate natively with the Soroban SDK and Tollcraft ecosystem).
 * **WASM Execution / Tracing:** 
   * `soroban-env-host` (to provide the standard Soroban host functions).
+  * `soroban-ledger-snapshot` (to read the `--state` file into that host).
   * `wasmi` (the WASM interpreter used by Soroban; we will need to inject an execution tracer/metering hook here to count instructions).
 * **Source Mapping:**
   * `gimli` or `addr2line`: To parse DWARF debug data (`.debug_line`, `.debug_info`) from the WASM binary and translate raw WASM Program Counters (PC) to Rust source file and line numbers.

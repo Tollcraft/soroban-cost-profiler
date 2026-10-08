@@ -8,11 +8,12 @@ cargo build --release
 ./target/release/soroban-cost-profiler --wasm fixtures/dwarf_probe/dwarf_probe.wasm --fn caller_of_heavy
 ```
 
-Three of the reproductions need a module the committed fixtures do not contain — one that imports a host
-function, one whose export takes an `i64`, and one whose export takes an `i32`. All three are hand-assembled
-test data in this repository (`NEEDS_HOST`, `NEEDS_ARG` and `NEEDS_I32` in `src/main.rs`, at 52, 46 and 43
-bytes), and the entries below say which one they ran and give its text format, rather than pretending a
-fixture produced them.
+Four of the reproductions need a module the committed fixtures do not contain — one that imports a host
+function, one whose export takes an `i64`, one whose export takes an `i32`, and one whose only work is a
+ledger read. All four are hand-assembled
+test data in this repository (`NEEDS_HOST`, `NEEDS_ARG`, `NEEDS_I32` and `READS_LEDGER` in `src/main.rs`, at
+52, 46, 43 and 55 bytes), and the entries below say which one they ran and give its text format, rather than
+pretending a fixture produced them.
 
 ## What is broken and what is working as designed
 
@@ -34,6 +35,7 @@ from any command line:
 | `failed to instantiate module: cannot find definition for import` | An import outside the Soroban host interface — the host's own 199 functions link | [Unlinked imports](#an-import-the-profiler-does-not-link) |
 | A `… trapped: wasm unreachable instruction executed` error on an SDK build | A `--args` word the guest could not read as a `Val`, or a host function that needed chain state | [Arguments](#the-export-takes-arguments) |
 | `takes 1 argument (i64); --args gave no values` | The export takes parameters; pass them with `--args` | [Arguments](#the-export-takes-arguments) |
+| `… trapped: host function 'x.3' failed: HostError: Error(Context, InternalError)` | A ledger read with no ledger — the run needs `--state` | [The contract reads the ledger](#the-contract-reads-the-ledger) |
 | `Instruction ceiling exceeded` | The trace-buffer guard tripped at your `--instruction-limit` | [The ceiling](#about-the-100m-instruction-limit) |
 | No records on stderr when you want them | The default level prints none; `-v` installs the transcript | [What the profiler is doing](#i-want-to-see-what-the-profiler-is-doing) |
 | `--quiet` prints nothing on stdout and exits `0` | The flag's whole job: the artifact is the answer | [`--quiet`](#--quiet-printed-nothing-is-that-a-failure) |
@@ -235,9 +237,11 @@ business standing up.
 Two things a *linked* host function can still fail at, and both now surface as a trap inside the run rather
 than as this refusal, which is why they keep the partial trace (#173) instead of writing nothing:
 
-* **Ledger state.** Nothing here gives the contract a ledger to read — no `--state`, no network, no snapshot —
-  so `get`, `put`, `require_auth` and their siblings fail against the unpopulated host. That is
-  [issue 212](https://github.com/Tollcraft/soroban-cost-profiler/issues/212).
+* **Ledger state.** `--state <snapshot.json>` gives the contract a ledger to read
+  ([The contract reads the ledger](#the-contract-reads-the-ledger)), and the five reads of *ledger info* —
+  sequence, version, timestamp, network ID, max TTL — are answered from the file. What no file can give a
+  directly invoked export is the contract *frame* `get`, `put` and `require_auth` build their key from, so
+  those fail against a stack that is empty rather than against missing data.
 * **Another contract.** `call` and its sibling re-enter the engine in production, which needs a live engine
   caller; the bound `Env` methods have none, so they return a host error instead of recursing.
 
@@ -315,13 +319,90 @@ parses). Two limits the flag does not paper over:
   The arity check cannot tell them apart — both are one `i64` — so the first one runs, and a run that traps
   keeps the partial trace it collected (#173) instead of refusing. Reading `dc.folded` after the first
   command is how this mistake gets past you: the file exists, and it is a profile of an aborted call.
-* **Arguments are values, not state.** Nothing here gives the contract a ledger to read; that is
-  [issue 212](https://github.com/Tollcraft/soroban-cost-profiler/issues/212).
+* **Arguments are values, not state.** `--args` hands the export words; it gives the contract no ledger to
+  read. That is `--state`, and it is in [The contract reads the ledger](#the-contract-reads-the-ledger).
 
 Both refusals exit `1` and write no file, for the same reason the unlinked-import entry above does: a command
 line that cannot be honoured should not leave behind an artifact that looks like it was. A value `--args`
 cannot parse at all — `--args abc` — is clap's refusal instead of the profiler's, and is in
 [Refused flags](#refused-flags).
+
+## The contract reads the ledger
+
+A contract that reads the chain has two separate things to get, and this tool now supplies both halves of one
+of them. `--state <file.json>` names a **Soroban ledger snapshot** — the same JSON `soroban ledger json`
+writes for a network and `Env::to_ledger_snapshot_file` writes for an integration test — and the profiler
+builds its host from that file before the contract is loaded. Without the flag the host's ledger is blank, and
+the first read of it traps:
+
+```console
+$ soroban-cost-profiler --wasm reads_ledger.wasm --fn read_sequence --output blank.folded
+error: 'read_sequence' trapped: host function 'x.3' failed: HostError: Error(Context, InternalError)
+DebugInfo not available
+. The partial trace up to the trap is in blank.folded, and its costs are incomplete because the call never returned.
+$ echo $?
+1
+```
+
+`reads_ledger.wasm` is `READS_LEDGER` from `src/main.rs`, 55 bytes:
+`(module (import "x" "3" (func (result i64))) (func (export "read_sequence") (result i64) call 0))`. `x.3` is
+the guest name of `get_ledger_sequence`, so this is the smallest contract that has to have a ledger. The same
+run against this repository's committed snapshot finishes, and `-v` is what marks which kind of run the profile
+came from:
+
+```console
+$ soroban-cost-profiler --wasm reads_ledger.wasm --fn read_sequence --state fixtures/state/ledger.json --output mocked.folded -v 2>&1 | grep mocked
+2026-10-08T13:19:23.247313Z  INFO soroban_cost_profiler: mocked ledger state from fixtures/state/ledger.json: sequence 500, timestamp 1700000000, 2 entries
+$ soroban-cost-profiler --wasm reads_ledger.wasm --fn read_sequence --state fixtures/state/ledger.json --output mocked.folded
+no function recorded any exclusive cost (cpu)
+$ echo $?
+0
+$ cat mocked.folded
+wasm[0] 0
+wasm[0];host[0] 0
+```
+
+**What is served, and what is not.** The five host functions that read the ledger *info* — `get_ledger_sequence`,
+`get_ledger_timestamp`, `get_ledger_version`, `get_ledger_network_id`, `get_max_live_until_ledger` — need no
+call context, so they answer from the file and the run above is one of them. A **storage** read is a different
+case: `get_contract_data` and its siblings build their key from the *current contract ID*, and the profiler
+invokes an export from outside a contract call, so that stack is empty and the read stops before it ever
+consults the snapshot. `require_auth` reads the same frame. Nothing about the file changes that; the entries are
+installed as the storage the host falls back to, and no read from a directly invoked export reaches it.
+
+The status makes that hard to spot from a terminal, and it is worth knowing before you read one:
+
+```console
+$ soroban-cost-profiler --wasm reads_ledger.wasm --fn read_sequence --output blank.folded 2>&1 | grep trapped
+error: 'read_sequence' trapped: host function 'x.3' failed: HostError: Error(Context, InternalError)
+```
+
+`Error(Context, InternalError)` is what a missing ledger reports and the same word a missing contract frame
+reports, because the host's sentence for its reason is a `DebugInfo` it only builds with its own `testutils`
+feature — a feature that pulls `arbitrary` into the dependency tree, which `AGENTS.md` rule 3 keeps out of this
+crate. So the message tells you the host refused, and the name in it (`'x.3'`, `'l.1'`) is what tells you which
+read: the module's own import names, listed in `soroban-env-common`'s `env.json`.
+
+Two `--state` files are refused before the contract is read, and neither leaves a profile:
+
+```console
+$ soroban-cost-profiler --wasm reads_ledger.wasm --fn read_sequence --state notes.json --output out.folded
+error: notes.json is not a Soroban ledger snapshot: missing field `protocol_version` at line 1 column 12. A snapshot is the JSON written by `soroban ledger json` or by `Env::to_ledger_snapshot_file`.
+$ soroban-cost-profiler --wasm reads_ledger.wasm --fn read_sequence --state ledger24.json --output out.folded
+error: ledger24.json declares protocol 24 and this profiler's host implements 28. Cost tables differ between protocols, so a snapshot from another protocol is refused rather than silently re-stamped; set `protocol_version` to 28 only when the ledger really is that protocol.
+$ echo $?
+1
+$ ls out.folded
+ls: out.folded: No such file or directory
+```
+
+**What to do.** For the second, take a snapshot of a ledger that really is this protocol — the number the host
+implements is the `soroban-env-host` version this build links, and it is printed in the message. Re-stamping an
+unrelated file's `protocol_version` to make it load is the mistake the refusal exists to stop: the profile would
+report one protocol's costs as another's. For the first, the field named is the field missing; a
+`missing field` message is serde reading the real snapshot shape, and `A snapshot is the JSON written by …` says
+which tool makes one. A file that is not there at all is `failed to read <path>: No such file or directory (os
+error 2)`, the same shape as every other unreadable path here.
 
 ## The export name is wrong
 
@@ -549,6 +630,9 @@ error: `compare` reads two .folded files and runs no contract, so `--wasm` canno
 
 $ soroban-cost-profiler --args 1000,7 compare before.folded after.folded
 error: `compare` reads two .folded files and runs no contract, so `--args` cannot accompany it.
+
+$ soroban-cost-profiler --state ledger.json compare before.folded after.folded
+error: `compare` reads two .folded files and runs no contract, so `--state` cannot accompany it.
 
 $ soroban-cost-profiler compare ok.folded .
 error: failed to read .: Is a directory (os error 21)

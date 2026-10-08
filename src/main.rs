@@ -28,10 +28,12 @@ use soroban_cost_profiler::aggregator::ProfileAggregator;
 use soroban_cost_profiler::formatter::OutputFormatter;
 use soroban_cost_profiler::models::{Format, Metric, TraceEvent};
 use soroban_cost_profiler::source_map::{SourceMapError, SourceMapper};
+use soroban_cost_profiler::state;
 use soroban_cost_profiler::tracer::{
     ExecutionTracer, ProfilerState, instantiate_module, invoke_function, load_wasm_file,
     parse_module, setup_engine, setup_mock_env,
 };
+use soroban_env_host::Host;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use tracing::level_filters::LevelFilter;
@@ -94,7 +96,7 @@ fn parse_positive_u64(s: &str) -> Result<u64, String> {
     version,
     about,
     long_about = "soroban-cost-profiler traces one exported function of a compiled Soroban contract and says where its cost went.\n\nTwo modes:\n  profile   --wasm <contract.wasm> --fn <export> runs that export under the instrumented engine and writes its profile to --output, in whatever shape --format picks: collapsed stacks (the default), a JSON call tree, or the raw event stream. The name defaults to the format — profile.folded, profile.json, profile.raw — and `-` sends the artifact to stdout instead of a file. `--args 1000,7` passes values to an export that takes parameters. Frames are named from the binary's own DWARF line tables when it has them; a binary built without debug info still profiles, and the run then says so on stderr instead of pretending its `wasm[pc]` frames are source lines.\n  compare   compare <base.folded> <new.folded> reads two profiles already on disk and prints the functions whose cost moved, biggest move first. It runs no contract, so it needs no --wasm.\n\nThe .folded file is the artifact. Open it in speedscope.app, or hand it to flamegraph.pl for a picture; this tool writes text and no SVG. `--format json` is the same tree for a program that walks it, and `--format raw` is the trace before any of it was named or folded. The terminal summary is a glance at the same run, not a second source of truth.\n\nExit codes:\n  0  the run was honoured as asked; a compare that reports a regression still exits 0, because bad news is still an answer\n  1  the invocation could not be honoured as asked: a contract that cannot be read, parsed or linked, an export the module does not have, a contract that trapped, a .folded file that is missing or malformed, or a refused flag\n  2  the input was accepted and the profiler could not finish its own work: a write the machine refused for a reason other than the path, or an engine that would not configure",
-    after_help = "Examples:\n  # profile the `call` export\n  soroban-cost-profiler --wasm target/wasm32-unknown-unknown/release/contract.wasm --fn call\n\n  # the same run in memory units, into a named file\n  soroban-cost-profiler --wasm contract.wasm --fn call --metric memory --output memory.folded\n\n  # the call tree as structured data, straight into jq\n  soroban-cost-profiler --wasm contract.wasm --fn call --format json --output -\n\n  # what the engine actually reported: one line per recorded event\n  soroban-cost-profiler --wasm contract.wasm --fn call --format raw --sample-rate 1\n\n  # an export that takes arguments\n  soroban-cost-profiler --wasm contract.wasm --fn transfer --args 1000,7\n\n  # a denser trace: one event every 100 rather than every 1000\n  soroban-cost-profiler --wasm contract.wasm --fn call --sample-rate 100\n\n  # a heavier contract than the default bound allows\n  soroban-cost-profiler --wasm contract.wasm --fn call --instruction-limit 200000000\n\n  # did the change help?\n  soroban-cost-profiler compare before.folded after.folded",
+    after_help = "Examples:\n  # profile the `call` export\n  soroban-cost-profiler --wasm target/wasm32-unknown-unknown/release/contract.wasm --fn call\n\n  # the same run in memory units, into a named file\n  soroban-cost-profiler --wasm contract.wasm --fn call --metric memory --output memory.folded\n\n  # the call tree as structured data, straight into jq\n  soroban-cost-profiler --wasm contract.wasm --fn call --format json --output -\n\n  # what the engine actually reported: one line per recorded event\n  soroban-cost-profiler --wasm contract.wasm --fn call --format raw --sample-rate 1\n\n  # an export that takes arguments\n  soroban-cost-profiler --wasm contract.wasm --fn transfer --args 1000,7\n\n  # a contract that reads the ledger, against a mocked ledger snapshot\n  soroban-cost-profiler --wasm contract.wasm --fn read_sequence --state ledger.json\n\n  # a denser trace: one event every 100 rather than every 1000\n  soroban-cost-profiler --wasm contract.wasm --fn call --sample-rate 100\n\n  # a heavier contract than the default bound allows\n  soroban-cost-profiler --wasm contract.wasm --fn call --instruction-limit 200000000\n\n  # did the change help?\n  soroban-cost-profiler compare before.folded after.folded",
     subcommand_negates_reqs = true
 )]
 pub struct Cli {
@@ -147,9 +149,31 @@ pub struct Cli {
     /// decoded into a live object handle. What this flag does not do is tag for you — an SDK `u32`
     /// parameter wants `value << 32 | 4` typed out, and the plain number runs until the guest reads a bad
     /// tag and traps. And an argument the contract expects to *find* in the ledger, rather than receive as
-    /// a word, needs the chain state issue 212's `--state` flag would supply, not this one.
+    /// a word, needs the chain state `--state` supplies rather than this one.
     #[arg(long, value_delimiter = ',', allow_hyphen_values = true)]
     pub args: Vec<i64>,
+
+    /// Ledger state to give the contract before it runs: a Soroban ledger snapshot file
+    ///
+    /// Without this flag the host's ledger is blank in both senses — there is no ledger info at all,
+    /// and the storage is an empty enforcing map — so a contract that reads its sequence, its
+    /// timestamp, its network ID or any ledger entry traps before it does any work. The file is the
+    /// standard snapshot format, the JSON `soroban ledger json` writes for a network and
+    /// `Env::to_ledger_snapshot_file` writes for an integration test, so a state dump taken
+    /// alongside the contract being profiled can be handed straight to the profiler.
+    ///
+    /// Ledger info goes in as written, so the five context-free reads of it (`get_ledger_sequence`
+    /// and friends) are served from the file. Entries go in as a recording storage over the
+    /// snapshot, the shape whose reads fall back to the file when the host's own map has nothing.
+    /// What a state file cannot supply is the contract frame a host call normally runs inside, and
+    /// every storage read from a directly invoked export stops there before it asks — see
+    /// `src/state.rs`.
+    ///
+    /// A snapshot whose `protocol_version` differs from this build's host is refused rather than
+    /// silently re-stamped: the cost tables the profile reports are the ones that protocol ships,
+    /// and pricing a protocol-21 contract from a protocol-28 table would be a number that lies.
+    #[arg(long)]
+    pub state: Option<PathBuf>,
 
     /// Record one trace event every N instructions (must be greater than 0)
     #[arg(long, default_value_t = 1000, value_parser = parse_positive_u32)]
@@ -587,10 +611,19 @@ fn check_target_arguments(fn_name: &str, params: &[ValType], args: &[Val]) -> Re
 ///   because the boundaries crossed before the panic are exactly the data #173 asks to keep. The
 ///   trap is still reported — see [`profile`], which writes the file and then fails the
 ///   invocation, so a truncated profile never looks like a finished one.
+///
+/// The `host` arrives built rather than being made here because the two ways to build one come from
+/// different halves of the command line: a plain run gets [`setup_mock_env`]'s blank ledger, and a
+/// `--state` run gets one loaded from the snapshot, whose failures are bad input rather than a
+/// nothing-ran case. Cost attribution is unaffected either way — the tracer reads the same budget
+/// off whichever host it is handed.
+///
+/// [`setup_mock_env`]: soroban_cost_profiler::tracer::setup_mock_env
 fn run_target(
     wasm_bytes: &[u8],
     fn_name: &str,
     tracer: ExecutionTracer,
+    host: Host,
     args: &[Val],
 ) -> Result<TargetRun, Failure> {
     let engine = setup_engine();
@@ -602,7 +635,7 @@ fn run_target(
 
     let state = ProfilerState {
         tracer,
-        host: setup_mock_env(),
+        host,
         last_fuel: 0,
     };
     let mut store = wasmi::Store::new(&engine, state);
@@ -647,6 +680,31 @@ fn run_target(
     })
 }
 
+/// The host this invocation traces against: a blank ledger, or the one `--state` names (#212).
+///
+/// With no `--state` this is exactly the host every run has always used, so a computation-only
+/// contract profiles identically either way. With one, a snapshot that cannot be read, is not a
+/// snapshot, or names a protocol this host does not implement fails the invocation *before* the
+/// contract is loaded: the run the user asked for is not the run that file describes, and profiling
+/// anyway would price the contract with a different protocol's cost tables and report them as the
+/// ledger it was given.
+fn ledger_host(cli: &Cli) -> Result<Host, Failure> {
+    let Some(path) = cli.state.as_deref() else {
+        return Ok(setup_mock_env());
+    };
+    let snapshot = state::read_snapshot(path).map_err(|error| Failure::Input(error.to_string()))?;
+    // The count belongs on the log line and not in the artifact: `--state` changes what a contract
+    // can read, and a profile of a mocked ledger is worth distinguishing from one of a blank it.
+    tracing::info!(
+        "mocked ledger state from {}: sequence {}, timestamp {}, {} entries",
+        path.display(),
+        snapshot.sequence_number,
+        snapshot.timestamp,
+        snapshot.ledger_entries.len()
+    );
+    state::host_from_snapshot(snapshot, path).map_err(|error| Failure::Input(error.to_string()))
+}
+
 /// Run the whole pipeline for one CLI invocation: write the artifact to `--output` and print the
 /// ranked summary to stdout.
 ///
@@ -684,7 +742,14 @@ fn profile(cli: &Cli) -> Result<(), Failure> {
     let wasm_bytes = load_wasm_file(&wasm.to_string_lossy())
         .map_err(|error| Failure::Input(format!("failed to read {}: {error}", wasm.display())))?;
     let args: Vec<Val> = cli.args.iter().copied().map(Val::I64).collect();
-    let run = run_target(&wasm_bytes, &cli.fn_name, initialize_tracer(cli), &args)?;
+    let host = ledger_host(cli)?;
+    let run = run_target(
+        &wasm_bytes,
+        &cli.fn_name,
+        initialize_tracer(cli),
+        host,
+        &args,
+    )?;
     let destination = artifact_destination(cli);
 
     // The artifact, and the one line the terminal adds about it. Two branches because `raw` has no
@@ -784,6 +849,8 @@ fn compare(baseline: &Path, current: &Path) -> Result<(), Failure> {
 /// both together say two things, and the only honest answers are "run the contract and ignore the
 /// files" or "read the files and ignore the contract" — the tool should not pick one silently.
 /// `--args` is the same shape (#211): values only mean something to a call, and `compare` makes none.
+/// `--state` (#212) is refused for the same reason — mocked ledger state is a property of a run, and
+/// this mode runs nothing.
 fn run(cli: &Cli) -> Result<(), Failure> {
     match &cli.command {
         Some(Command::Compare { baseline, current }) => {
@@ -796,6 +863,12 @@ fn run(cli: &Cli) -> Result<(), Failure> {
             if !cli.args.is_empty() {
                 return Err(Failure::Input(String::from(
                     "`compare` reads two .folded files and runs no contract, so `--args` cannot \
+                     accompany it.",
+                )));
+            }
+            if cli.state.is_some() {
+                return Err(Failure::Input(String::from(
+                    "`compare` reads two .folded files and runs no contract, so `--state` cannot \
                      accompany it.",
                 )));
             }
@@ -932,6 +1005,7 @@ mod tests {
             output: Some(output),
             fn_name: fn_name.into(),
             args: Vec::new(),
+            state: None,
             sample_rate: 1000,
             instruction_limit: 100_000_000,
             metric: Metric::Cpu,
@@ -949,6 +1023,7 @@ mod tests {
             output: Some(PathBuf::from("unused.folded")),
             fn_name: String::new(),
             args: Vec::new(),
+            state: None,
             sample_rate: 1000,
             instruction_limit: 100_000_000,
             metric: Metric::Cpu,
@@ -979,7 +1054,7 @@ mod tests {
     /// the number the contract computes rather than the shape of the trace.
     #[test]
     fn the_named_export_is_invoked_and_its_result_returned() {
-        let run = run_target(FIXTURE, "caller_of_heavy", tracer(), &[]).unwrap();
+        let run = run_target(FIXTURE, "caller_of_heavy", tracer(), setup_mock_env(), &[]).unwrap();
         assert!(
             matches!(run.values.as_slice(), [Val::I64(value)] if *value == CALLER_OF_HEAVY),
             "the run must return the value the contract computes, got {:?}",
@@ -1000,7 +1075,14 @@ mod tests {
     /// pass if the value were dropped and the engine handed the function a zero.
     #[test]
     fn the_argument_reaches_the_contract_and_the_answer_comes_back() {
-        let run = run_target(NEEDS_ARG, "needs_arg", tracer(), &[Val::I64(40)]).unwrap();
+        let run = run_target(
+            NEEDS_ARG,
+            "needs_arg",
+            tracer(),
+            setup_mock_env(),
+            &[Val::I64(40)],
+        )
+        .unwrap();
         assert!(run.trapped.is_none(), "{:?}", run.trapped);
         assert!(
             matches!(run.values.as_slice(), [Val::I64(value)] if *value == 42),
@@ -1016,7 +1098,9 @@ mod tests {
     /// parameter type the module actually declares.
     #[test]
     fn a_missing_argument_is_refused_with_the_exports_signature() {
-        let error = input_failure(run_target(NEEDS_ARG, "needs_arg", tracer(), &[]).unwrap_err());
+        let error = input_failure(
+            run_target(NEEDS_ARG, "needs_arg", tracer(), setup_mock_env(), &[]).unwrap_err(),
+        );
         assert!(
             error.contains("'needs_arg' takes 1 argument (i64)")
                 && error.contains("--args gave no values"),
@@ -1031,7 +1115,9 @@ mod tests {
     #[test]
     fn an_extra_argument_is_refused_the_same_way() {
         let args = [Val::I64(1), Val::I64(2)];
-        let error = input_failure(run_target(NEEDS_ARG, "needs_arg", tracer(), &args).unwrap_err());
+        let error = input_failure(
+            run_target(NEEDS_ARG, "needs_arg", tracer(), setup_mock_env(), &args).unwrap_err(),
+        );
         assert!(
             error.contains("takes 1 argument (i64)") && error.contains("--args gave 2 values"),
             "{error}"
@@ -1043,7 +1129,14 @@ mod tests {
     #[test]
     fn an_export_with_no_parameters_says_so_rather_than_the_count_it_wanted() {
         let error = input_failure(
-            run_target(FIXTURE, "caller_of_heavy", tracer(), &[Val::I64(1)]).unwrap_err(),
+            run_target(
+                FIXTURE,
+                "caller_of_heavy",
+                tracer(),
+                setup_mock_env(),
+                &[Val::I64(1)],
+            )
+            .unwrap_err(),
         );
         assert!(
             error.contains("takes no arguments") && error.contains("--args gave 1 value"),
@@ -1057,7 +1150,14 @@ mod tests {
     #[test]
     fn a_parameter_of_another_width_is_named_by_position_and_type() {
         let error = input_failure(
-            run_target(NEEDS_I32, "needs_i32", tracer(), &[Val::I64(1)]).unwrap_err(),
+            run_target(
+                NEEDS_I32,
+                "needs_i32",
+                tracer(),
+                setup_mock_env(),
+                &[Val::I64(1)],
+            )
+            .unwrap_err(),
         );
         assert!(
             error.contains("takes 1 argument (i32)")
@@ -1096,7 +1196,9 @@ mod tests {
 
     #[test]
     fn an_unknown_fn_names_the_functions_the_module_does_export() {
-        let error = input_failure(run_target(FIXTURE, "compute_heavy", tracer(), &[]).unwrap_err());
+        let error = input_failure(
+            run_target(FIXTURE, "compute_heavy", tracer(), setup_mock_env(), &[]).unwrap_err(),
+        );
         assert!(
             error.contains("caller_of_heavy") && error.contains("memory_heavy_loop"),
             "{error}"
@@ -1107,7 +1209,8 @@ mod tests {
     /// which failed silently. Not knowing which export to profile is not a runnable default.
     #[test]
     fn an_empty_fn_name_is_an_error_rather_than_a_guess() {
-        let error = input_failure(run_target(FIXTURE, "", tracer(), &[]).unwrap_err());
+        let error =
+            input_failure(run_target(FIXTURE, "", tracer(), setup_mock_env(), &[]).unwrap_err());
         assert!(error.starts_with("--fn is required"), "{error}");
     }
 
@@ -1611,7 +1714,7 @@ mod tests {
     /// `trapped` has to travel beside the events and be reported by the CLI.
     #[test]
     fn a_trapping_contract_keeps_its_partial_trace_and_reports_the_trap() {
-        let run = run_target(BOOM, "boom", tracer(), &[]).unwrap();
+        let run = run_target(BOOM, "boom", tracer(), setup_mock_env(), &[]).unwrap();
         assert!(
             run.trapped.is_some(),
             "the run must record that it did not finish"
@@ -1676,6 +1779,104 @@ mod tests {
         assert!(
             !output_path.exists(),
             "a run that never started must not leave a profile behind"
+        );
+    }
+
+    /// `(module (import "x" "3" (func (result i64))) (func (export "read_sequence") (result i64) call 0))`
+    /// — the smallest contract that reads the ledger.
+    ///
+    /// `x.3` is `get_ledger_sequence`, and its answer crosses the boundary as a tagged word the same
+    /// way every `Val`-typed host result does (`src/host.rs`'s `to_word`). Bytes, in order: header;
+    /// type section (one `() -> i64`); import section (`x.3` = func type 0); function section (func 1
+    /// has type 0); export section (`"read_sequence"` = func 1); code section (`call 0`, `end`).
+    /// Hand-assembled for `NEEDS_ARG`'s reason: the committed fixtures never touch chain state, and
+    /// the test job has no `wasm32` target.
+    const READS_LEDGER: &[u8] = b"\x00\x61\x73\x6d\x01\x00\x00\x00\x01\x05\x01\x60\x00\x01\x7e\x02\x07\x01\x01x\x01\x33\x00\x00\x03\x02\x01\x00\x07\x11\x01\rread_sequence\x00\x01\x0a\x06\x01\x04\x00\x10\x00\x0b";
+
+    /// The committed `--state` file, addressed the way `src/state.rs` addresses it.
+    const LEDGER_STATE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/state/ledger.json");
+
+    /// Decode the word a `() -> i64` export returned into the Soroban `Val` it carries.
+    fn guest_val(word: i64) -> soroban_env_host::Val {
+        soroban_env_host::Val::from_payload(word as u64)
+    }
+
+    /// #212's premise, at the guest boundary: the blank host every run without `--state` has used
+    /// has no ledger to answer from.
+    #[test]
+    fn a_ledger_read_traps_when_no_state_is_given() {
+        let run = run_target(
+            READS_LEDGER,
+            "read_sequence",
+            tracer(),
+            setup_mock_env(),
+            &[],
+        )
+        .unwrap();
+        let trapped = run
+            .trapped
+            .expect("a blank ledger has no sequence to return");
+        assert!(trapped.contains("host function 'x.3' failed"), "{trapped}");
+    }
+
+    /// #212's "done", at the same boundary: the contract's read returns the snapshot's sequence
+    /// instead of trapping.
+    #[test]
+    fn a_state_snapshot_answers_the_ledger_read() {
+        let path = Path::new(LEDGER_STATE);
+        let host = state::host_from_snapshot(state::read_snapshot(path).unwrap(), path).unwrap();
+        let run = run_target(READS_LEDGER, "read_sequence", tracer(), host, &[]).unwrap();
+        assert!(run.trapped.is_none(), "the run was meant to finish");
+        let Val::I64(word) = run.values[0] else {
+            panic!("the export returns one i64");
+        };
+        let sequence = soroban_env_host::U32Val::try_from(guest_val(word)).unwrap();
+        assert_eq!(u32::from(sequence), 500);
+    }
+
+    /// The flag at the whole-pipeline boundary: the invocation that fails with no `--state` succeeds
+    /// with it, and the finished run leaves an artifact behind.
+    #[test]
+    fn the_state_flag_reaches_the_pipeline() {
+        let dir = tempfile::tempdir().unwrap();
+        let wasm = dir.path().join("reads_ledger.wasm");
+        std::fs::write(&wasm, READS_LEDGER).unwrap();
+
+        let error = input_failure(
+            profile(&cli(
+                dir.path().join("blank.folded"),
+                wasm.clone(),
+                "read_sequence",
+            ))
+            .unwrap_err(),
+        );
+        assert!(error.contains("trapped"), "{error}");
+
+        let output = dir.path().join("mocked.folded");
+        let mut with_state = cli(output.clone(), wasm, "read_sequence");
+        with_state.state = Some(PathBuf::from(LEDGER_STATE));
+        profile(&with_state).unwrap();
+        assert!(output.exists(), "a run that finished writes its profile");
+    }
+
+    /// A state file the host cannot use fails the invocation before the contract is loaded, so no
+    /// profile of a run that did not honour the request is ever written.
+    #[test]
+    fn a_state_file_that_is_not_a_snapshot_writes_no_profile() {
+        let dir = tempfile::tempdir().unwrap();
+        let wasm = dir.path().join("reads_ledger.wasm");
+        std::fs::write(&wasm, READS_LEDGER).unwrap();
+        let not_a_snapshot = dir.path().join("notes.json");
+        std::fs::write(&not_a_snapshot, r#"{"todo":"fill this in"}"#).unwrap();
+
+        let output = dir.path().join("refused.folded");
+        let mut cli = cli(output.clone(), wasm, "read_sequence");
+        cli.state = Some(not_a_snapshot);
+        let error = input_failure(profile(&cli).unwrap_err());
+        assert!(error.contains("not a Soroban ledger snapshot"), "{error}");
+        assert!(
+            !output.exists(),
+            "a run refused before it started must not leave a profile behind"
         );
     }
 
@@ -1887,6 +2088,25 @@ mod tests {
         let error = input_failure(run(&cli).unwrap_err());
         assert!(
             error.contains("--args") && error.contains("compare"),
+            "{error}"
+        );
+    }
+
+    /// #212's flag answers the same refusal: a ledger to hand the contract means something to a run,
+    /// and `compare` makes none.
+    #[test]
+    fn state_beside_compare_is_refused_not_ignored() {
+        let dir = tempfile::tempdir().unwrap();
+        let baseline = folded_file(&dir, "base.folded", "caller_of_heavy 100\n");
+        let current = folded_file(&dir, "new.folded", "caller_of_heavy 90\n");
+        let cli = Cli {
+            state: Some(PathBuf::from(LEDGER_STATE)),
+            ..compare_cli(baseline, current)
+        };
+
+        let error = input_failure(run(&cli).unwrap_err());
+        assert!(
+            error.contains("--state") && error.contains("compare"),
             "{error}"
         );
     }

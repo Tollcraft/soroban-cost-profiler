@@ -4,7 +4,7 @@
 
 ## 1. Core Tech Stack
 * **Language:** Rust
-* **Execution & Tracing:** `wasmi` (engine) + `soroban-env-host`
+* **Execution & Tracing:** `wasmi` (engine) + `soroban-env-host` (the host functions a contract imports; `soroban-ledger-snapshot` reads a `--state` file into it)
 * **Source Mapping:** `gimli` / `addr2line` (parsing DWARF `.debug_info` & `.debug_line`)
 * **Visualization:** `inferno` (SVG flamegraph generation)
 

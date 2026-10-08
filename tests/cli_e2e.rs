@@ -54,6 +54,17 @@ const NEEDS_HOST: &[u8] = b"\x00\x61\x73\x6d\x01\x00\x00\x00\x01\x04\x01\x60\x00
 /// all and writes an artifact.
 const NEEDS_ARG: &[u8] = b"\x00\x61\x73\x6d\x01\x00\x00\x00\x01\x06\x01\x60\x01\x7e\x01\x7e\x03\x02\x01\x00\x07\x0d\x01\x09\x6e\x65\x65\x64\x73\x5f\x61\x72\x67\x00\x00\x0a\x09\x01\x07\x00\x20\x00\x42\x02\x7c\x0b";
 
+/// `(module (import "x" "3" (func (result i64))) (func (export "read_sequence") (result i64) call 0))`.
+///
+/// #212's subject at 55 bytes: a contract whose only work is a ledger read, so the difference
+/// between a blank ledger and a mocked one is the difference between exit 1 and exit 0 and nothing
+/// else. `x.3` is the guest name of `get_ledger_sequence`; the same bytes are in `src/main.rs`, and
+/// duplicated here because a test target cannot reach another target's private items.
+const READS_LEDGER: &[u8] = b"\x00\x61\x73\x6d\x01\x00\x00\x00\x01\x05\x01\x60\x00\x01\x7e\x02\x07\x01\x01x\x01\x33\x00\x00\x03\x02\x01\x00\x07\x11\x01\rread_sequence\x00\x01\x0a\x06\x01\x04\x00\x10\x00\x0b";
+
+/// The committed `--state` file: a protocol-28 ledger at sequence 500.
+const LEDGER_STATE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/state/ledger.json");
+
 /// Run the built binary and capture everything a caller can see: code, stdout, stderr.
 fn profiler(args: &[&str]) -> Output {
     Command::new(PROFILER)
@@ -189,6 +200,96 @@ fn a_contract_that_imports_a_host_function_fails_before_it_can_profile() {
     assert!(
         !Path::new(&output).exists(),
         "a profile of a call that was never made is not a profile"
+    );
+}
+
+/// #212 from outside the process, as the pair the issue asks for: the contract that traps on the
+/// blank ledger finishes when the run names a snapshot.
+///
+/// Both invocations run the same bytes and the same export, so the flag is the only variable. The
+/// second one also carries `-v`, because the mocked-ledger line is how a caller distinguishes the
+/// profile of a mocked ledger from one of a blank it — and #214's rule puts that record on stderr,
+/// which leaves stdout exactly as the run without the flag wrote it.
+#[test]
+fn a_state_snapshot_answers_a_ledger_read_that_traps_without_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let wasm = write_file(dir.path(), "reads_ledger.wasm", READS_LEDGER);
+    let blank = dir
+        .path()
+        .join("blank.folded")
+        .to_string_lossy()
+        .into_owned();
+
+    let trapped = profiler(&["--wasm", &wasm, "--fn", "read_sequence", "--output", &blank]);
+    code(&trapped, 1);
+    assert!(
+        stderr(&trapped).contains("host function 'x.3' failed"),
+        "the trap has to name the host function the contract called: {:?}",
+        stderr(&trapped)
+    );
+
+    let mocked = dir
+        .path()
+        .join("mocked.folded")
+        .to_string_lossy()
+        .into_owned();
+    let finished = profiler(&[
+        "--wasm",
+        &wasm,
+        "--fn",
+        "read_sequence",
+        "--state",
+        LEDGER_STATE,
+        "--output",
+        &mocked,
+        "-v",
+    ]);
+    code(&finished, 0);
+    assert!(
+        stderr(&finished).contains("mocked ledger state"),
+        "a verbose run says which ledger it priced against: {:?}",
+        stderr(&finished)
+    );
+    assert_eq!(
+        std::fs::read_to_string(&mocked).unwrap(),
+        "wasm[0] 0\nwasm[0];host[0] 0\n",
+        "the finished run crosses one wasm boundary and one host call"
+    );
+}
+
+/// A file `--state` cannot use is refused before the contract is read, so the failure is a command
+/// line to fix rather than a profile of a run that did not honour the request.
+#[test]
+fn a_state_file_that_is_not_a_snapshot_is_refused_and_writes_no_profile() {
+    let dir = tempfile::tempdir().unwrap();
+    let wasm = write_file(dir.path(), "reads_ledger.wasm", READS_LEDGER);
+    let notes = write_file(dir.path(), "notes.json", b"{\"todo\": \"fill this in\"}");
+    let output = dir
+        .path()
+        .join("refused.folded")
+        .to_string_lossy()
+        .into_owned();
+
+    let run = profiler(&[
+        "--wasm",
+        &wasm,
+        "--fn",
+        "read_sequence",
+        "--state",
+        &notes,
+        "--output",
+        &output,
+    ]);
+    code(&run, 1);
+
+    let message = stderr(&run);
+    assert!(
+        message.contains("not a Soroban ledger snapshot") && message.contains("protocol_version"),
+        "the refusal should name the file and the field it wanted: {message:?}"
+    );
+    assert!(
+        !Path::new(&output).exists(),
+        "a run refused before it started must not leave a profile behind"
     );
 }
 

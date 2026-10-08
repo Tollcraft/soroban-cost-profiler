@@ -401,6 +401,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 
 [[package]]
+name = "cfg_eval"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "45565fc9416b9896014f5732ac776f810ee53a66730c17e4020c3ec064a8f88f"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "chrono"
 version = "0.4.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1784,6 +1795,17 @@ dependencies = [
 
 [[package]]
 name = "schemars"
+version = "0.8.22"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3fbf2ae1b8bc8e02df939598064d22402220cd5bbcca1c76f7d6a310974d5615"
+dependencies = [
+ "dyn-clone",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "schemars"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4cd191f9397d57d581cddd31014772520aa448f65ef991055d7f61582c65165f"
@@ -1881,6 +1903,7 @@ dependencies = [
  "indexmap 1.9.3",
  "indexmap 2.14.1",
  "jiff",
+ "schemars 0.8.22",
  "schemars 0.9.0",
  "schemars 1.2.2",
  "serde_core",
@@ -1993,6 +2016,7 @@ dependencies = [
  "gimli",
  "serde_json",
  "soroban-env-host 28.0.2",
+ "soroban-ledger-snapshot 28.0.0",
  "tempfile",
  "tracing",
  "tracing-subscriber",
@@ -2028,6 +2052,7 @@ dependencies = [
  "ethnum",
  "num-derive",
  "num-traits",
+ "serde",
  "soroban-env-macros 28.0.2",
  "soroban-wasmi",
  "static_assertions",
@@ -2160,6 +2185,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "soroban-ledger-snapshot"
+version = "28.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b5caeb0a4c8af6d04dc1dfbf96199e0d50ae086c7d54c9001abe78bb891fc44f"
+dependencies = [
+ "serde",
+ "serde_json",
+ "serde_with",
+ "soroban-env-common 28.0.2",
+ "soroban-env-host 28.0.2",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "soroban-sdk"
 version = "21.7.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2176,7 +2215,7 @@ dependencies = [
  "serde_json",
  "soroban-env-guest",
  "soroban-env-host 21.2.1",
- "soroban-ledger-snapshot",
+ "soroban-ledger-snapshot 21.7.7",
  "soroban-sdk-macros",
  "stellar-strkey 0.0.8",
 ]
@@ -2314,10 +2353,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f93d09ff8b9f919b084f664003c4c546ac66a76affd5429460dbe29f4b326f8e"
 dependencies = [
  "base64 0.22.1",
+ "cfg_eval",
  "crate-git-revision 0.0.9",
  "escape-bytes",
  "ethnum",
  "hex",
+ "serde",
+ "serde_with",
  "sha2",
  "stellar-strkey 0.0.13",
 ]

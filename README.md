@@ -69,6 +69,9 @@ Two modes: **profile** a contract, or **compare** two profiles you already have.
 # profile one exported function into a file
 soroban-cost-profiler --wasm contract.wasm --fn call --output before.folded
 
+# a contract that reads the ledger gets a snapshot to read it from
+soroban-cost-profiler --wasm contract.wasm --fn call --state ledger.json --output before.folded
+
 # after changing the contract: profile again, then diff the two runs
 soroban-cost-profiler --wasm contract.wasm --fn call --output after.folded
 soroban-cost-profiler compare before.folded after.folded
@@ -81,6 +84,7 @@ soroban-cost-profiler compare before.folded after.folded
 | `-w, --wasm <PATH>` | — | The compiled contract. Required for profiling; not accepted next to `compare`, which runs nothing. |
 | `--fn <EXPORT>` | — | The exported function to invoke. Profiling refuses to start without a name, and a name the module does not export is an error that lists the exports it does have. |
 | `--args <N,N>` | — | Values for that export's parameters, comma-separated and `i64` only: `--args 1000,7`. The count and widths are checked against the module's own signature before the call, so a mismatch is refused as a bad command line (`takes 1 argument (i64); --args gave no values`) rather than running as a trap that leaves a half-profile on disk. On a `soroban-sdk` build the word is what the guest reads, which is a tagged `Val` rather than the number you wrote — see [A real contract runs; chain state is what it cannot read](#a-real-contract-runs-chain-state-is-what-it-cannot-read). Refused next to `compare`, which makes no call to pass anything to. |
+| `--state <PATH>` | — | A **ledger snapshot** to run the contract against: the JSON `soroban ledger json` writes for a network and `Env::to_ledger_snapshot_file` writes for an integration test. Without it the host's ledger is blank in both senses — no ledger info, and an empty storage map — so a contract that reads its sequence, timestamp or network ID traps before it does any work. A snapshot whose `protocol_version` is not this build's host protocol is refused by name, because the cost tables the profile reports belong to the protocol that ships them. A *storage* read still stops at the contract frame the profiler never pushes — same link as `--args`. Refused next to `compare`, which runs nothing. |
 | `-o, --output <PATH>` | the format's own name | Where the artifact is written, or `-` for stdout. Omit it and the name follows `--format`: `profile.folded`, `profile.json`, `profile.raw`. |
 | `--metric <METRIC>` | `cpu` | `cpu`, `memory` or `hostcalls`. Sets what the counts in the file are denominated in; a `.folded` file does not record which, so both sides of a `compare` must have agreed on this flag beforehand. `--format json` writes the metric into the document; `--format raw` ignores it, because a trace event carries its cpu and memory deltas unselected. |
 | `--format <FORMAT>` | `folded` | `folded`, `json` or `raw` — how the run's result is serialized. See [Three output formats](#three-output-formats). |
@@ -343,11 +347,11 @@ cargo build --profile profiling --target wasm32-unknown-unknown
 > **A real `soroban-sdk` build runs.** `instantiate_module` links the Soroban host interface — all 199
 > functions of `soroban-env-host`'s table, bound to the same `Host` the network runs (`src/host.rs`) — so a
 > contract that uses `Vec`, `Map` or `obj_from_u64` instantiates, executes, and leaves costed `host[…]`
-> frames in the profile. Two things the bindings cannot supply are still out of reach: reading **ledger
-> state** fails against the unpopulated host, which is
-> [#212](https://github.com/Tollcraft/soroban-cost-profiler/issues/212), and `call` to another contract
-> returns a host error instead of recursing. An import from outside that interface, such as a JS shim's
-> `(import "env" "missing" …)`, still stops the run before the export is called.
+> frames in the profile. Chain state comes from `--state`, which builds the host from a ledger snapshot
+> (`src/state.rs`); what is still out of reach is a *storage* read, which stops at the contract frame these
+> bindings never push, and `call` to another contract, which returns a host error instead of recursing. An
+> import from outside that interface, such as a JS shim's `(import "env" "missing" …)`, still stops the run
+> before the export is called.
 
 ## Limitations
 
@@ -425,13 +429,72 @@ The host interface is bound — `src/host.rs` generates one registration per ent
 instantiates, executes, and is traced. Three ceilings remain, all of them the parts of a network run this
 tool does not stand up:
 
-* **No ledger state.** There is no `--state`, no network and no snapshot, so anything reading storage has
-  nothing to read and fails with a host error — [issue 212](https://github.com/Tollcraft/soroban-cost-profiler/issues/212).
+* **No contract frame.** `--state <snapshot.json>` now supplies the ledger itself (`src/state.rs`): its
+  `LedgerInfo` goes into the host, which answers the five context-free reads of it, and the snapshot's
+  entries are installed as the storage the host reads through. What no state file can supply is the
+  *contract frame* a host call normally runs inside, because the profiler invokes an export from outside a
+  contract call. A read whose ledger key is built from the current contract ID — `get_contract_data` and its
+  siblings, `require_auth` — stops on that empty stack and never reaches the file.
 * **No contract-to-contract `call`.** Production hands its dispatch a live engine caller so a contract can
   re-enter wasm; the `Env` methods bound here run with none, so those two functions return a host error
   instead of recursing. A single-module trace never reaches them.
 * **Arguments are words, not numbers.** On an SDK build a parameter arrives as a tagged `Val`, which is what
   the `--args` note below says out loud with the measured pair.
+
+The ledger half is a pair of runs on one 55-byte module,
+`(module (import "x" "3" (func (result i64))) (func (export "read_sequence") (result i64) call 0))` — `x.3`
+is `get_ledger_sequence` — and the snapshot this repository commits at `fixtures/state/ledger.json`, with the
+no-debug warning elided because the interesting halves are the exit code and whether a file appears:
+
+```console
+$ soroban-cost-profiler --wasm reads_ledger.wasm --fn read_sequence --output blank.folded
+$ echo $?
+1
+$ soroban-cost-profiler --wasm reads_ledger.wasm --fn read_sequence --state fixtures/state/ledger.json --output mocked.folded
+no function recorded any exclusive cost (cpu)
+$ echo $?
+0
+$ cat mocked.folded
+wasm[0] 0
+wasm[0];host[0] 0
+```
+
+The first run's `error:` line is the host's own refusal, quoted whole because its shape surprises people:
+
+```console
+error: 'read_sequence' trapped: host function 'x.3' failed: HostError: Error(Context, InternalError)
+DebugInfo not available
+. The partial trace up to the trap is in blank.folded, and its costs are incomplete because the call never returned.
+```
+
+`DebugInfo not available` is the host's sentence and not a defect here: the reason it would print after it is
+a `DebugInfo` that `soroban-env-host` builds only with its own `testutils` feature, which this crate does not
+enable — that feature is what pulls `arbitrary` into the tree, and `AGENTS.md` rule 3 keeps it out. So
+`Error(Context, InternalError)` is all a refusal says, which is why the two refusals in this list — no ledger
+and no frame — read identically from a terminal. `-v` marks the run that did get a ledger, on stderr:
+
+```console
+$ soroban-cost-profiler --wasm reads_ledger.wasm --fn read_sequence --state fixtures/state/ledger.json --output mocked.folded -v 2>&1 | grep mocked
+2026-10-08T13:19:23.247313Z  INFO soroban_cost_profiler: mocked ledger state from fixtures/state/ledger.json: sequence 500, timestamp 1700000000, 2 entries
+```
+
+Two command lines are refused before the contract is read, because the run they describe is not the run the
+file belongs to. `notes.json` here is `{"todo":"x"}` and `ledger24.json` is this repository's snapshot with
+`protocol_version` changed to `24`:
+
+```console
+$ soroban-cost-profiler --wasm reads_ledger.wasm --fn read_sequence --state notes.json --output out.folded
+error: notes.json is not a Soroban ledger snapshot: missing field `protocol_version` at line 1 column 12. A snapshot is the JSON written by `soroban ledger json` or by `Env::to_ledger_snapshot_file`.
+$ soroban-cost-profiler --wasm reads_ledger.wasm --fn read_sequence --state ledger24.json --output out.folded
+error: ledger24.json declares protocol 24 and this profiler's host implements 28. Cost tables differ between protocols, so a snapshot from another protocol is refused rather than silently re-stamped; set `protocol_version` to 28 only when the ledger really is that protocol.
+$ echo $?
+1
+$ ls out.folded
+ls: out.folded: No such file or directory
+```
+
+Re-stamping a protocol would price the contract with another protocol's cost tables and report them as the
+ledger it was given, which is the one thing a profile cannot survive.
 
 Passing *values* is not one of them any more: `--args 1000,7` hands arguments to an export that takes
 parameters. Two things about it are worth knowing before a run looks wrong:

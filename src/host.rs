@@ -43,8 +43,11 @@
 //! # What still does not work
 //!
 //! * **Ledger and authorization.** Functions that read chain state fail with a host error against
-//!   the unpopulated [`Host::default`] this module binds. Giving them a ledger is issue 212's
-//!   `--state` flag, not a gap in these bindings.
+//!   the unpopulated [`Host::default`] this module binds. `--state` now replaces that host with one
+//!   built from a ledger snapshot (`src/state.rs`), which serves the reads of ledger *info*; a
+//!   storage read still stops at the missing contract frame its key builder needs, and
+//!   `require_auth` reads that same frame. Neither is a gap in these bindings — the host functions
+//!   are called correctly and the host answers them as an unframed call answers.
 //! * **Contract-to-contract calls.** `call` and its sibling need to re-enter the engine, which the
 //!   production host does by handing its dispatch a live `wasmi::Caller`. The `Env` methods called
 //!   here run with no caller — the same path the network's native contracts call through — so those

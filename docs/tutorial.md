@@ -306,13 +306,33 @@ exclusive cost (cpu)`. That is not a failure — a loop that never crosses into 
 the engine to attribute, which is the same statement steps 2 and 3 make about a contract with no SDK
 dependency at all.
 
-Two things a real contract can ask for still do not work. Reading and writing ledger state needs a mocked
-chain: these bindings run against an unpopulated host, so an export that calls `require_auth` or a `ledger`
-function fails with a host error instead of finding a record. Giving that host a ledger is
-[issue 212](https://github.com/Tollcraft/soroban-cost-profiler/issues/212). And contract-to-contract `call`
-needs to re-enter the engine, which this profiler never sets up, so those two functions return a host error
-rather than running the callee. Both are named in the bindings' own module documentation, and neither stops
-the run above.
+A contract that reads the *chain* needs a ledger, and that is a flag rather than a missing feature:
+`--state` builds the host from a Soroban ledger snapshot before the contract is loaded. Here is the smallest
+case, run from the repository root — `reads_ledger.wasm` is the 55-byte `READS_LEDGER` test module in
+`src/main.rs`,
+`(module (import "x" "3" (func (result i64))) (func (export "read_sequence") (result i64) call 0))`, whose
+only work is `get_ledger_sequence`, and `fixtures/state/ledger.json` is the snapshot this repository commits:
+
+```console
+$ soroban-cost-profiler --wasm reads_ledger.wasm --fn read_sequence --output blank.folded
+error: 'read_sequence' trapped: host function 'x.3' failed: HostError: Error(Context, InternalError)
+DebugInfo not available
+. The partial trace up to the trap is in blank.folded, and its costs are incomplete because the call never returned.
+$ echo $?
+1
+$ soroban-cost-profiler --wasm reads_ledger.wasm --fn read_sequence --state fixtures/state/ledger.json --output mocked.folded
+no function recorded any exclusive cost (cpu)
+$ echo $?
+0
+```
+
+Sequence 500 and timestamp 1700000000 come out of the file and into the contract, which is the difference
+between the two runs above. What a snapshot cannot give is the **contract frame** a host call normally runs
+inside: `get_contract_data` and its siblings build their ledger key from the current contract ID, and the
+profiler invokes an export from outside a contract call, so those reads and `require_auth` stop before they
+consult the state. Contract-to-contract `call` is the other gap — it needs to re-enter the engine, which this
+profiler never sets up, so it returns a host error instead of running the callee. Both are named in the
+bindings' own module documentation, and neither stops the runs above.
 
 ## 7. Did my change help?
 
