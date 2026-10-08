@@ -276,3 +276,29 @@ rather than "solved" with a cosmetic diff:
   `README.md`'s fifteen tile lines byte for byte. Documentation only — `CONTRIBUTING.md` and this file, no code, no
   dependency, no CI change; `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`
   and `cargo test --workspace` all pass unchanged.
+
+## Post-MVP Accuracy & Coverage
+
+Work opened after the ladder closed, filed 2026-10-08 as #252-#257. The section exists **before** the
+work so six contributions cannot collide on it: each issue ticks its own line and nothing else in this
+file. The wording names the result, not the plan, because an unchecked box that describes an approach
+reads like a decision already made.
+
+- [ ] **Fuel-bounded execution (#252):** `--instruction-limit <N>` stops a contract that spins inside one
+  function body by running the store on a finite fuel budget instead of `u64::MAX`, keeps the partial
+  trace, and exits `1` — `PRD.md` §8's infinite-loop requirement, met without an engine instruction hook.
+- [ ] **Fuel-delta segment costing (#253):** the wasm between two host-call boundaries is costed from
+  `Caller::get_fuel` deltas read at the host bindings rather than the synthetic unit step, so
+  `exclusive_cpu` is a number the engine produced; `ProfilerState::last_fuel` is populated or deleted.
+- [ ] **CI runs the real-contract cases (#254):** `build-and-test` consumes `build-fixture`'s artifact, so
+  the two `#[ignore]`d Soroban-build tests gate every pull request; the 622 KB wasm stays out of git.
+  Sole owner of `.github/workflows/ci.yml` among the open issues.
+- [ ] **State documents describe the shipped tool (#255):** `README.md`'s first screen, `Cargo.toml`'s
+  description, `AGENTS.md` and both `ARCHITECTURE` files stop promising rendered SVGs and
+  per-instruction counts, every `PRD.md` requirement the engine misses names the issue that owns it, and
+  this file's stale "the instruction ceiling cannot halt a run" finding says what `#213` actually wired.
+- [ ] **Warning-free rustdoc (#256):** the five unresolved intra-doc links resolve, `cargo doc --no-deps`
+  prints nothing, and a separate `.github/workflows/docs.yml` builds docs under `-D warnings` so the
+  count cannot drift again.
+- [ ] **Tree hygiene (#257):** the committed Phase-2 PR draft and the finished template script are gone,
+  and the duplicated `#163` entry in Phase 3 is counted once.
