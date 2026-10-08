@@ -133,6 +133,48 @@ the issue.
 * **Scope kept to the issue.** A rename, a reformat or a "while I was here" refactor in a PR about something
   else costs the reviewer the diff and the reviewer's time costs the next contributor a rebase.
 
+## Keeping the contributor grid current
+
+`README.md`'s Contributors section is a **dated snapshot, not a badge**: one `<img>` tile per person, served by
+GitHub itself, and a sentence underneath stating how many people the grid lists and the day it was read.
+Nothing refreshes it on its own, and that is the deliberate trade — an honest list with a date on it instead of
+a live image whose definition of "contributor" is somebody else's cache. So **the PR that lands someone's
+first contribution is the PR that adds them to the grid**, by running this and replacing the tile lines inside
+the section's first `<p align="center">` block (the second one holds the provenance sentence, not tiles):
+
+```sh
+gh api "repos/Tollcraft/soroban-cost-profiler/contributors?per_page=100" \
+  --jq '.[]
+        | select(.type != "Bot" and .login != "web-flow")
+        | "  <a href=\"https://github.com/\(.login)\"><img src=\"https://github.com/\(.login).png\" width=\"64\" height=\"64\" alt=\"\(.login)\" title=\"\(.login)\" /></a>"'
+```
+
+Then update the sentence below the grid — the count in words, and the date — and let the command's output
+stand for who is in it. Do not add a name by hand and do not re-sort the list: a hand-added tile is a claim
+with no command behind it, which is exactly what the rule above exists to prevent. Re-run on 2026-10-08 this
+prints the fifteen lines already in `README.md` **byte for byte**, so that equality is the check to redo if
+the command itself is ever edited.
+
+Four choices inside it are load-bearing:
+
+* **The order is the endpoint's** — descending by the count it reports — and grouping happens by GitHub
+  *account*, which is what makes it a list of people rather than a list of spellings. `wagmiiii` appears once
+  at 71, where `main`'s history shows three author names (`adajala` 32, `Ademola` 22, `WAGMI` 17) under two
+  addresses that together account for exactly those 71 commits:
+  `git log --format='%ae' origin/main | grep -cE 'ademola2993k@gmail.com|130152505'` prints 71. `git shortlog`
+  would render one maintainer as three contributors, so the grid takes the endpoint's grouping rather than
+  re-deriving one locally — and the section links the repository's own contributors graph for anyone who wants
+  the live view.
+* **`select(.type != "Bot")` alone is not enough**, which is why `web-flow` is also excluded by name: GitHub's
+  merge bot reports `"type": "User"`, and one commit, so it would otherwise sit at the foot of a list of
+  people with an avatar nobody owns.
+* **Avatars come from `https://github.com/<login>.png`**, the image the profile page itself serves, so every
+  tile is verifiable by clicking it. A third-party contributors badge would redraw the whole list from a cache
+  this repository does not control and cannot audit.
+* **`per_page=100` is the endpoint's own page cap.** Past a hundred contributors, add `--paginate`. The list is
+  fifteen today, so this is the failure that arrives years from now rather than next month — noted here so the
+  next person does not silently truncate the grid.
+
 ## Review and merge
 
 * A PR merges when **both CI jobs are green** and the branch is current with `main`.
