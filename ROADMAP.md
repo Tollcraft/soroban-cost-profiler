@@ -245,10 +245,11 @@ rather than "solved" with a cosmetic diff:
   prints the fifteen lines already in `README.md` **byte for byte**, and that equality is documented as the check
   to redo if the command itself is ever edited. Four of its properties are recorded as load-bearing, each
   because a later cleanup would break it silently: the order and the grouping are the endpoint's, which counts per
-  GitHub *account* — so `wagmiiii` appears once at 71 where `main`'s own history shows three author names
-  (`adajala`, `Ademola`, `WAGMI`) under two addresses that sum to exactly those 71,
-  `git log --format='%ae' origin/main | grep -cE 'ademola2993k@gmail.com|130152505'`, while `git shortlog` would
-  render one maintainer as three contributors; a `type != "Bot"` filter alone would **not** drop `web-flow`,
+  GitHub *account* — so `wagmiiii` appears once where `main`'s own history shows three author names (`adajala`,
+  `Ademola`, `WAGMI`) across two addresses, and what the documented check pins is that
+  `git log --format='%ae' origin/main | grep -cE 'ademola2993k@gmail.com|130152505'` answers the **same count** the
+  endpoint reports for that login rather than any particular number, while `git shortlog` would render one
+  maintainer as three contributors; a `type != "Bot"` filter alone would **not** drop `web-flow`,
   because GitHub's merge bot reports `"type": "User"` with one commit, so it is excluded by name as well; the
   avatars stay GitHub-served so every tile is checkable by clicking it; and `per_page=100` is the endpoint's page
   cap, so a hundredth-and-beyond contributor needs `--paginate` — eighty-five contributors away today, noted so
@@ -260,3 +261,18 @@ rather than "solved" with a cosmetic diff:
   the reader and noticing. Documentation only: one new `CONTRIBUTING.md` section, no code, no dependency, no CI
   change; `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings` and
   `cargo test --workspace` all pass unchanged.
+- [x] **The grid's cross-check states an invariant, not a number:** #249's section proves that the contributors
+  endpoint groups by GitHub *account*, and it proved it by quoting `71` twice — once as the endpoint's count for
+  `wagmiiii`, once as what `git log --format='%ae' origin/main | grep -cE 'ademola2993k@gmail.com|130152505'`
+  prints. The equality is real and measured; the number was self-invalidating, because the merge that carried that
+  sentence (`d30a28f`) added a commit under those same two addresses. Re-measured minutes after it landed: the
+  endpoint still reported **71** while the grep printed **72**, and the two accounts with nothing new merged
+  matched exactly — `mallison031` 19 against 19 on one address, `Gabbydunkk` 6 against 6 across two. So the
+  endpoint trails the newest commit rather than disagreeing with the history, which a grid carrying its own date
+  can afford. `CONTRIBUTING.md` now names what to check — that the grep answers the endpoint's own figure — and
+  keeps the numbers as dated measurements instead of as the claim; the per-name split (`adajala`, `Ademola`,
+  `WAGMI`) loses its counts for the same reason, since every merge moves those too. The section's other documented
+  check is untouched and was re-run against the merged `main`: the `gh api … --jq …` command still prints
+  `README.md`'s fifteen tile lines byte for byte. Documentation only — `CONTRIBUTING.md` and this file, no code, no
+  dependency, no CI change; `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`
+  and `cargo test --workspace` all pass unchanged.
