@@ -376,6 +376,10 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for more detailed guidelines.
 
 Join the discussion on our [Discord](https://discord.gg/5aprtMSyR).
 
+Participation in this repository, its issue tracker and that Discord is governed by our
+[Code of Conduct](CODE_OF_CONDUCT.md) — the Contributor Covenant, version 2.1. Reports go to the
+maintainers listed below, by direct message, so they are private by default.
+
 ## Maintainers
 
 | Name | Role | Contact |
