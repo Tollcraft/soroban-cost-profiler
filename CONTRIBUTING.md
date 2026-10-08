@@ -110,6 +110,9 @@ measured instead of asserted.
 
 ## What a PR has to contain
 
+GitHub pre-fills this list when you open a pull request, from `.github/pull_request_template.md`: keep the
+headings, replace the comments, and tick what you actually ran.
+
 The body is a **breakdown, not a summary** (rule 6 of `AGENTS.md`): what changed, what you ran to believe it,
 and what is deliberately out of scope. "Closes #123" is not a description, and neither is a restatement of
 the issue.
