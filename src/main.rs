@@ -56,6 +56,25 @@ fn parse_positive_u32(s: &str) -> Result<u32, String> {
     }
 }
 
+/// `value_parser` for `--instruction-limit`: a positive bound, in the tracer's own `u64`.
+///
+/// Zero is refused for the opposite reason to `--sample-rate 0`. There, zero silently turns a
+/// throttle off and lets the buffer grow; here, `record_step` increments its count *before*
+/// comparing, so a ceiling of 0 fails the first boundary and the run stops having profiled nothing
+/// — an invocation that looks like a contract that traps immediately. The field is `u64` because
+/// `ExecutionTracer::with_instruction_ceiling` takes `u64`, and a raised limit is the point of the
+/// flag: the PRD's 100M is a default, not a maximum.
+fn parse_positive_u64(s: &str) -> Result<u64, String> {
+    let val: u64 = s
+        .parse()
+        .map_err(|_| format!("`{s}` is not a valid number"))?;
+    if val == 0 {
+        Err(String::from("must be greater than 0"))
+    } else {
+        Ok(val)
+    }
+}
+
 /// Two shapes: the flat flags profile a contract, and `compare` reads two profiles already on disk.
 /// `subcommand_negates_reqs` is what lets the second shape work without `--wasm` — a mode that
 /// diffs two `.folded` files cannot sensibly demand a contract to execute — while `--wasm` stays
@@ -73,7 +92,7 @@ fn parse_positive_u32(s: &str) -> Result<u32, String> {
     version,
     about,
     long_about = "soroban-cost-profiler traces one exported function of a compiled Soroban contract and says where its cost went.\n\nTwo modes:\n  profile   --wasm <contract.wasm> --fn <export> runs that export under the instrumented engine and writes collapsed stacks to --output (default: profile.folded). Frames are named from the binary's own DWARF line tables when it has them; a binary built without debug info still profiles, and the run then says so on stderr instead of pretending its `wasm[pc]` frames are source lines.\n  compare   compare <base.folded> <new.folded> reads two profiles already on disk and prints the functions whose cost moved, biggest move first. It runs no contract, so it needs no --wasm.\n\nThe .folded file is the artifact. Open it in speedscope.app, or hand it to flamegraph.pl for a picture; this tool writes text and no SVG. The terminal summary is a glance at the same run, not a second source of truth.\n\nExit codes:\n  0  the run was honoured as asked; a compare that reports a regression still exits 0, because bad news is still an answer\n  1  the invocation could not be honoured as asked: a contract that cannot be read, parsed or linked, an export the module does not have, a contract that trapped, a .folded file that is missing or malformed, or a refused flag\n  2  the input was accepted and the profiler could not finish its own work: a write the machine refused for a reason other than the path, or an engine that would not configure",
-    after_help = "Examples:\n  # profile the `call` export\n  soroban-cost-profiler --wasm target/wasm32-unknown-unknown/release/contract.wasm --fn call\n\n  # the same run in memory units, into a named file\n  soroban-cost-profiler --wasm contract.wasm --fn call --metric memory --output memory.folded\n\n  # a denser trace: one event every 100 rather than every 1000\n  soroban-cost-profiler --wasm contract.wasm --fn call --sample-rate 100\n\n  # did the change help?\n  soroban-cost-profiler compare before.folded after.folded",
+    after_help = "Examples:\n  # profile the `call` export\n  soroban-cost-profiler --wasm target/wasm32-unknown-unknown/release/contract.wasm --fn call\n\n  # the same run in memory units, into a named file\n  soroban-cost-profiler --wasm contract.wasm --fn call --metric memory --output memory.folded\n\n  # a denser trace: one event every 100 rather than every 1000\n  soroban-cost-profiler --wasm contract.wasm --fn call --sample-rate 100\n\n  # a heavier contract than the default bound allows\n  soroban-cost-profiler --wasm contract.wasm --fn call --instruction-limit 200000000\n\n  # did the change help?\n  soroban-cost-profiler compare before.folded after.folded",
     subcommand_negates_reqs = true
 )]
 pub struct Cli {
@@ -107,6 +126,21 @@ pub struct Cli {
     /// Record one trace event every N instructions (must be greater than 0)
     #[arg(long, default_value_t = 1000, value_parser = parse_positive_u32)]
     pub sample_rate: u32,
+
+    /// Stop the run after N traced steps (must be greater than 0)
+    ///
+    /// The OOM guard on the trace buffer, made configurable: the run stops past this many steps,
+    /// the trace recorded up to that point is still written to `--output`, and the exit code is 1
+    /// with `Instruction ceiling exceeded` named as the cause. The default is the bound the
+    /// profiler has always used, so omitting the flag changes nothing.
+    ///
+    /// A step is a boundary the engine reports, not a wasm instruction — `wasmi` 2.0 has no
+    /// instruction hook, so one step stands for everything run since the boundary before it.
+    /// Raising the limit therefore lets a heavy contract finish; lowering it is a way to stop a
+    /// runaway run early, but it counts boundaries, so a loop that never calls anything will not
+    /// reach it.
+    #[arg(long, default_value_t = 100_000_000, value_parser = parse_positive_u64)]
+    pub instruction_limit: u64,
 
     /// Cost metric the `.folded` counts are written in
     ///
@@ -148,9 +182,12 @@ pub enum Command {
 /// artifact, and a reader who wants the whole ranking has the file.
 const TOP_FUNCTIONS: usize = 5;
 
-/// Stage 1: build a tracer carrying the CLI's sampling rate and the MVP instruction ceiling.
+/// Stage 1: build a tracer carrying both CLI bounds — the sampling rate and the instruction ceiling
+/// that `--instruction-limit` exists to set.
 fn initialize_tracer(cli: &Cli) -> ExecutionTracer {
-    ExecutionTracer::new().with_sample_rate(cli.sample_rate as u64)
+    ExecutionTracer::new()
+        .with_sample_rate(cli.sample_rate as u64)
+        .with_instruction_ceiling(cli.instruction_limit)
 }
 
 /// Print a degraded-profile warning where the user will actually read it (#186).
@@ -571,6 +608,7 @@ mod tests {
             output,
             fn_name: fn_name.into(),
             sample_rate: 1000,
+            instruction_limit: 100_000_000,
             metric: Metric::Cpu,
             command: None,
         }
@@ -583,6 +621,7 @@ mod tests {
             output: PathBuf::from("unused.folded"),
             fn_name: String::new(),
             sample_rate: 1000,
+            instruction_limit: 100_000_000,
             metric: Metric::Cpu,
             command: Some(Command::Compare { baseline, current }),
         }
@@ -961,6 +1000,81 @@ mod tests {
     #[test]
     fn a_negative_sample_rate_is_rejected_too() {
         assert!(parse(&["--sample-rate", "-1"]).is_err());
+    }
+
+    /// #213 exposes a bound the tracer has always enforced, so "done" has two halves: the flag has
+    /// to parse, and the run has to honour it. This is the first half — an accepted value reaches
+    /// the field unchanged, and an absent flag keeps the number every existing run used.
+    #[test]
+    fn an_instruction_limit_reaches_the_cli_and_keeps_its_default() {
+        assert_eq!(
+            parse(&["--instruction-limit", "200000000"])
+                .unwrap()
+                .instruction_limit,
+            200_000_000
+        );
+        assert_eq!(parse(&[]).unwrap().instruction_limit, 100_000_000);
+    }
+
+    /// Zero is refused, and not because it is a useless bound: `record_step` increments its counter
+    /// *before* comparing, so a ceiling of 0 fails the first boundary and the run ends having
+    /// profiled nothing. The message is the same rule as `--sample-rate 0` for the same reason —
+    /// both are better refused here than explained several stages later.
+    #[test]
+    fn a_zero_instruction_limit_is_rejected_and_says_why() {
+        let error = parse(&["--instruction-limit", "0"]).unwrap_err();
+        assert!(
+            error.contains("--instruction-limit")
+                && error.contains("'0'")
+                && error.contains("greater than 0"),
+            "the message must name the flag, the offending value, and the rule: {error}"
+        );
+    }
+
+    /// The field's type is the tracer's, and a number too large for a `u32` is still a number a
+    /// `u64` can hold: a bound past `u32::MAX` is accepted rather than read as an overflow, which is
+    /// why this flag has its own parser instead of reusing `--sample-rate`'s.
+    #[test]
+    fn an_instruction_limit_beyond_u32_is_accepted() {
+        assert_eq!(
+            parse(&["--instruction-limit", "5000000000"])
+                .unwrap()
+                .instruction_limit,
+            5_000_000_000
+        );
+    }
+
+    /// Past the type's own range the text is refused as what it is: `u64::MAX + 1` is not "too
+    /// large" for a bound, it is not a number the field can hold, and `record_step` saturates rather
+    /// than wrapping, so a ceiling that cannot be represented has no meaning to be given.
+    #[test]
+    fn an_instruction_limit_too_large_for_u64_is_unparseable() {
+        let error = parse(&["--instruction-limit", "18446744073709551616"]).unwrap_err();
+        assert!(
+            error.contains("not a valid number") && !error.contains("greater than 0"),
+            "{error}"
+        );
+    }
+
+    /// The second half of "done", measured rather than asserted: the same export that completes at
+    /// the default ceiling stops at a ceiling of 1, the halt arrives as #183's input failure, and the
+    /// boundaries already crossed survive in the artifact — #173's rule applied to the profiler's own
+    /// guard rather than to a contract trap.
+    #[test]
+    fn a_low_instruction_limit_halts_the_run_and_keeps_the_trace_so_far() {
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("halted.folded");
+        let mut cli = cli(output.clone(), fixture(), "caller_of_heavy");
+        cli.instruction_limit = 1;
+
+        let error = input_failure(profile(&cli).unwrap_err());
+        assert!(error.contains("Instruction ceiling exceeded"), "{error}");
+        let artifact = std::fs::read_to_string(&output)
+            .expect("the trace up to the halt is the profile the user came for");
+        assert!(
+            !artifact.is_empty(),
+            "a halted run must still write: {artifact:?}"
+        );
     }
 
     /// `(module (func (export "boom") unreachable))` — the smallest contract that traps.

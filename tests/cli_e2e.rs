@@ -284,6 +284,95 @@ fn a_binary_without_line_tables_warns_on_stderr_and_keeps_stdout_clean() {
     );
 }
 
+/// #213's flag from outside the process, where the halt is a shell-visible event: exit 1, a message
+/// that names which guard fired, and the trace up to the halt left on disk.
+///
+/// The pair matters more than the single case. `caller_of_heavy` crosses two boundaries per
+/// invocation — `wasmi` 2.0 reports the entry and the exit and nothing between them — so a ceiling of
+/// 2 completes the run and a ceiling of 1 stops it, and the two runs differ only by the flag. That is
+/// what "the profiler respects the limit" means while it can be tested honestly: a contract that runs
+/// a million instructions inside one body still emits two boundaries and would sail past any ceiling
+/// above 2, which is `README.md`'s "The 100M ceiling cannot see an infinite loop" and #210's to fix.
+#[test]
+fn an_instruction_limit_halts_the_run_and_keeps_the_trace_so_far() {
+    let dir = tempfile::tempdir().unwrap();
+    let halted = dir
+        .path()
+        .join("halted.folded")
+        .to_string_lossy()
+        .into_owned();
+
+    let run = profiler(&[
+        "--wasm",
+        FIXTURE,
+        "--fn",
+        "caller_of_heavy",
+        "--output",
+        &halted,
+        "--instruction-limit",
+        "1",
+    ]);
+    code(&run, 1);
+    assert!(
+        stderr(&run).contains("Instruction ceiling exceeded"),
+        "the halt must name its own guard rather than look like a contract trap: {:?}",
+        stderr(&run)
+    );
+    // #173's rule, applied to the profiler's own ceiling: the guard stopped a run that had already
+    // crossed boundaries, so the partial trace is the artifact and not nothing.
+    let artifact = std::fs::read_to_string(&halted)
+        .unwrap_or_else(|error| panic!("a halted run still writes its trace: {error}"));
+    let stacks = OutputFormatter::parse_folded(&artifact)
+        .unwrap_or_else(|error| panic!("a halted run must write valid folded stacks: {error}"));
+    assert!(
+        !stacks.is_empty(),
+        "the partial profile must have a frame: {artifact:?}"
+    );
+
+    // One boundary higher and the same command succeeds, so the halt above is the flag's doing.
+    let finished = dir
+        .path()
+        .join("finished.folded")
+        .to_string_lossy()
+        .into_owned();
+    let run = profiler(&[
+        "--wasm",
+        FIXTURE,
+        "--fn",
+        "caller_of_heavy",
+        "--output",
+        &finished,
+        "--instruction-limit",
+        "2",
+    ]);
+    code(&run, 0);
+    // The two files are the same bytes, and that is the finding rather than a redundancy: the guard
+    // fires while unwinding, `wasmi` still reports `ReturningFromWasm`, and the halted profile is
+    // structurally identical to the finished one. Only the exit code and stderr tell them apart, so
+    // this asserts both and never lets the artifact alone be read as "the call completed".
+    assert_eq!(
+        std::fs::read_to_string(&finished).unwrap(),
+        artifact,
+        "a run that halts at the exit boundary and one that finishes it hold the same frames"
+    );
+
+    // And a refused value never reaches the engine.
+    let run = profiler(&[
+        "--wasm",
+        FIXTURE,
+        "--fn",
+        "caller_of_heavy",
+        "--instruction-limit",
+        "0",
+    ]);
+    code(&run, 1);
+    assert!(
+        stderr(&run).contains("--instruction-limit"),
+        "the refusal has to name the flag: {:?}",
+        stderr(&run)
+    );
+}
+
 #[test]
 fn compare_reads_two_files_and_a_regression_is_still_a_successful_run() {
     let dir = tempfile::tempdir().unwrap();

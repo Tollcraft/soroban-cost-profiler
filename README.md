@@ -83,6 +83,7 @@ soroban-cost-profiler compare before.folded after.folded
 | `-o, --output <PATH>` | `profile.folded` | Where the collapsed stacks are written. |
 | `--metric <METRIC>` | `cpu` | `cpu`, `memory` or `hostcalls`. Sets what the counts in the file are denominated in; a `.folded` file does not record which, so both sides of a `compare` must have agreed on this flag beforehand. |
 | `--sample-rate <N>` | `1000` | Record one trace event every N traced steps; `0` is rejected, because it would silently turn sampling off and buffer every step. Today the engine reports one step per call boundary, so this flag changes *when* events are emitted rather than what they measure — see [Limitations](#the-counts-are-boundary-counts-not-instructions). |
+| `--instruction-limit <N>` | `100000000` | The bound on the trace buffer, now yours to set: the run stops past this many traced steps, the partial trace is still written, and the exit is `1` with `Instruction ceiling exceeded`. `0` is rejected — the counter increments before it compares, so a ceiling of 0 would stop the run at its first boundary. Same caveat as `--sample-rate`: steps are boundaries, so raising this lets a *boundary*-heavy contract finish and does nothing for a loop that never calls anything. |
 | `compare <BASE> <CURRENT>` | — | The second mode: reads two `.folded` files, prints the functions whose cost moved, biggest move first. |
 
 `--help` prints these with their long-form notes and the exit-code table; `-h` is the short version;
@@ -338,19 +339,23 @@ ones from whatever machine ran `rustc`, which is why file matching in the tests 
 ### The 100M ceiling cannot see an infinite loop
 
 The MVP's memory rule (`AGENTS.md` rule 5: a contract can run 100M instructions, so nothing may allocate
-per instruction) is why a 100M ceiling exists, and `record_step` enforces it (`src/tracer.rs:93`). But its
-only caller in the live path is the call hook, which runs once per boundary —
+per instruction) is why a 100M ceiling exists, and `record_step` enforces it (`src/tracer.rs:93`). Its limit
+is now a flag — `--instruction-limit`, [#213](https://github.com/Tollcraft/soroban-cost-profiler/issues/213)
+— but the flag does not change what the counter counts: its only caller in the live path is the call hook,
+which runs once per boundary —
 so the counter advances per boundary, not per instruction. A contract that loops forever *inside* one
 function body emits no boundaries, never advances the counter, and is not stopped; `wasmi`'s own fuel is set
-to `u64::MAX` for the run (`src/main.rs:348-350`), so the engine does not stop it either.
+to `u64::MAX` for the run (`src/main.rs:385-387`), so the engine does not stop it either.
 
 This is the sharpest edge in the tool, and it is the one place where the roadmap's
 "Infinite Loop Protection" box reads more strongly than the current engine can deliver — `ROADMAP.md` now
 annotates it. The guard is real for the tracing buffer it was written to protect (a run with many boundaries
-cannot grow the `Vec` unboundedly) and inert against a compute-only runaway loop. A ceiling that also halts
-execution needs the instruction hook, and
-[issue 213](https://github.com/Tollcraft/soroban-cost-profiler/issues/213) makes its limit configurable once
-there is something for it to bound. Until then: profile exports that terminate, and prefer the fixture-sized
+cannot grow the `Vec` unboundedly, and `--instruction-limit` is what bounds it) and inert against a
+compute-only runaway loop. A ceiling that also halts execution needs the instruction hook, which is
+[issue 210](https://github.com/Tollcraft/soroban-cost-profiler/issues/210); the flag has a measurable effect
+today on contracts that make many host calls, and on the fixture here the pair `--instruction-limit 1` /
+`--instruction-limit 2` is exactly the difference between a halted run and a finished one
+(`tests/cli_e2e.rs`). Until then: profile exports that terminate, and prefer the fixture-sized
 contracts this repository tests against.
 
 ### What is *not* a limitation

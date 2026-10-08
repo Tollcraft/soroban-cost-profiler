@@ -32,7 +32,7 @@ from any command line:
 | A warning about `.debug_info` or `name` | Symbol degraded, run fine — pick which of the three | [Unnamed frames](#frames-are-named-by-address-not-source) |
 | `failed to instantiate module: cannot find definition for import` | A real `soroban-sdk` contract; blocked on #210 | [Host imports](#a-contract-that-imports-host-functions-does-not-run) |
 | `trapped: encountered an incorrect number of parameters` | The export takes arguments; blocked on #211 | [Arguments](#the-export-takes-arguments) |
-| `Instruction ceiling exceeded` | Only reachable after 100M *boundaries* | [The ceiling](#about-the-100m-instruction-limit) |
+| `Instruction ceiling exceeded` | The trace-buffer guard tripped at your `--instruction-limit` | [The ceiling](#about-the-100m-instruction-limit) |
 | `error: … (os error 2)` and friends | Bad path, bad file, bad flag | [Exit codes](#exit-codes-1-and-2) |
 
 ## The profile is one line of zeros
@@ -272,7 +272,7 @@ rebuild it.
 ## The output path is wrong, and which exit code it earns
 
 Exit codes are the documented `0` success, `1` "the invocation could not be honoured as asked", `2` "the
-input was accepted and the profiler could not finish its own work" (`src/main.rs:426-440` splits these two on
+input was accepted and the profiler could not finish its own work" (`src/main.rs:463-477` splits these two on
 the error kind, so a path you could never have written to is `1` and a machine refusing a write is `2`):
 
 ```console
@@ -308,14 +308,21 @@ error: invalid value '0' for '--sample-rate <SAMPLE_RATE>': must be greater than
 $ soroban-cost-profiler --wasm contract.wasm --fn call --metric gas
 error: invalid value 'gas' for '--metric <METRIC>'
   [possible values: cpu, memory, hostcalls]
+
+$ soroban-cost-profiler --wasm contract.wasm --fn call --instruction-limit 0
+error: invalid value '0' for '--instruction-limit <INSTRUCTION_LIMIT>': must be greater than 0
 $ echo $?
 1
 ```
 
-Zero is the case that matters on the first one: `record_step` throttles by comparing
+Zero is the case that matters on the first and the last, and it means opposite things, which is why both are
+refused rather than honoured. For `--sample-rate`, `record_step` throttles by comparing
 `current_step_cost >= sample_rate`, so a rate of `0` would make that true on every step and silently turn
 sampling off, buffering one event per step up to the ceiling — the OOM `AGENTS.md` rule 5 exists to prevent.
-Refusing it at the flag means the run never starts instead of dying later with no explanation.
+For `--instruction-limit` the comparison runs the other way: the counter increments *before* it is compared,
+so a ceiling of `0` fails the first boundary and the run ends having profiled nothing, which looks exactly
+like a contract that traps on its first instruction. Refusing both at the flag means the run never starts
+instead of dying later with no explanation.
 
 ## `compare` complains
 
@@ -348,32 +355,45 @@ exits are `0`.
 
 The MVP constraint (`AGENTS.md` rule 5: a contract can run 100M instructions, so nothing may allocate per
 instruction) is enforced as `instruction_ceiling` inside `record_step` (`src/tracer.rs:93-95`), whose error
-text is `Instruction ceiling exceeded`. If you ever see it, it reaches you through the trap path, so the
-message has the shape of a trap and the partial file beside it:
+text is `Instruction ceiling exceeded`. The bound is a flag — `--instruction-limit`, from
+[issue 213](https://github.com/Tollcraft/soroban-cost-profiler/issues/213) — so unlike every other ceiling in
+this file, this one you can move. When it fires it reaches you through the trap path, so the message has the
+shape of a trap and the partial file beside it:
 
-```text
-error: 'foo' trapped: Instruction ceiling exceeded. The partial trace up to the trap is in foo.folded,
-and its costs are incomplete because the call never returned.
+```console
+$ soroban-cost-profiler --wasm fixtures/dwarf_probe/dwarf_probe.wasm --fn caller_of_heavy \
+    --output halted.folded --instruction-limit 1
+error: 'caller_of_heavy' trapped: Instruction ceiling exceeded. The partial trace up to the trap is in
+halted.folded, and its costs are incomplete because the call never returned.
+$ echo $?
+1
 ```
 
-That form is read out of the code (`profile` builds the trap message at `src/main.rs:442-449`), not
-measured, and there is a reason to be careful with it: **today the guard cannot fire from a contract that
-merely does a lot of work.** Its only caller in the live path is the call hook, which runs once per boundary
-(`src/tracer.rs:352-356`), so the counter advances per boundary rather than per instruction, and one
-host-initiated call gives two of them. A contract that loops forever *inside* one function body emits no
-boundaries, never advances the counter, and is not stopped — and `wasmi`'s own fuel is set to `u64::MAX` for
-the run (`src/main.rs:348-350`), so the engine does not stop it either.
+Measured on that command (`--instruction-limit 2` on the same fixture exits `0`), and pinned by
+`an_instruction_limit_halts_the_run_and_keeps_the_trace_so_far` in `tests/cli_e2e.rs`. Two things the transcript
+does not say, and a reader should know before trusting it:
 
-So if your symptom is "it hangs" or "my machine ran out of memory", the ceiling message is not the diagnosis
-and there is no flag that changes it:
+* **The file is not evidence of the halt.** `halted.folded` here holds `wasm[0] 0`, byte-for-byte what a
+  completed run of the same export writes, because the guard trips while the call unwinds and `wasmi` still
+  reports `ReturningFromWasm`. Only the exit code and this message separate the two, so never read the
+  artifact alone as "the call finished".
+* **The counter counts boundaries, not instructions.** Its only caller in the live path is the call hook,
+  which runs once per boundary (`src/tracer.rs:352-356`), and one host-initiated call gives two of them —
+  which is why `1` halts a function that computes a million instructions and `2` lets it finish. A contract
+  that loops forever *inside* one function body emits no boundaries, never advances the counter, and is not
+  stopped — and `wasmi`'s own fuel is set to `u64::MAX` for the run (`src/main.rs:385-387`), so the engine
+  does not stop it either.
+
+So if your symptom is "it hangs" or "my machine ran out of memory", the ceiling message is not the diagnosis,
+and `--instruction-limit` is not the lever either:
 
 * **A run that never returns** is a compute-only runaway loop. This is the sharpest edge in the tool, and the
   one place the roadmap's checked "Infinite Loop Protection" box overstates what the current engine can
   deliver — the guard is real for the tracing buffer it was written to protect (a run with many boundaries
-  cannot grow the `Vec` unboundedly) and inert against a loop that stays inside one body. Profile exports
-  that terminate, and prefer the fixture-sized contracts this repository tests against. Making the limit
-  configurable once there is an instruction hook to apply it to is
-  [issue 213](https://github.com/Tollcraft/soroban-cost-profiler/issues/213).
+  cannot grow the `Vec` unboundedly, and `--instruction-limit` is what bounds it) and inert against a loop
+  that stays inside one body. Profile exports that terminate, and prefer the fixture-sized contracts this
+  repository tests against. Turning the ceiling into an execution bound needs the instruction hook, which is
+  [issue 210](https://github.com/Tollcraft/soroban-cost-profiler/issues/210)'s to land.
 * **A very large `.folded` file** is not instruction volume either — event count tracks boundaries — so the
   lever you have is the contract you point at, not `--sample-rate`.
 
