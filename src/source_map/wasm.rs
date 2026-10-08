@@ -277,7 +277,7 @@ pub(crate) mod tests {
 
     /// Build a module whose code section payload is exactly `payload`, so a test can describe a
     /// malformed function list instead of trusting a toolchain to emit one.
-    pub(crate) fn module_with_code(payload: &[u8]) -> Vec<u8> {
+    fn module_with_code(payload: &[u8]) -> Vec<u8> {
         let mut bytes = b"\0asm\x01\0\0\0".to_vec();
 
         bytes.push(10);
