@@ -12,8 +12,8 @@
 //! test job. It is also why the fixture here is the committed `fixtures/dwarf_probe` binary rather
 //! than the 622 KB `dummy_contract.wasm` that `fixtures/build.sh` produces: the test job has no
 //! wasm32 target and CI builds that artifact in a job whose files tests cannot read (#160 documents
-//! the same split). The contract build's own boundary is the `#[ignore]`d case at the bottom, which
-//! is #210's to invert.
+//! the same split). The contract build itself is what the `#[ignore]`d case at the bottom runs, once
+//! `fixtures/build.sh` has produced it.
 
 use soroban_cost_profiler::formatter::OutputFormatter;
 use std::path::Path;
@@ -301,7 +301,8 @@ fn a_binary_without_line_tables_warns_on_stderr_and_keeps_stdout_clean() {
 /// 2 completes the run and a ceiling of 1 stops it, and the two runs differ only by the flag. That is
 /// what "the profiler respects the limit" means while it can be tested honestly: a contract that runs
 /// a million instructions inside one body still emits two boundaries and would sail past any ceiling
-/// above 2, which is `README.md`'s "The 100M ceiling cannot see an infinite loop" and #210's to fix.
+/// above 2, which is `README.md`'s "The 100M ceiling cannot see an infinite loop": closing that gap needs a
+/// per-instruction hook, and `wasmi` 2.0 has none to hang one on.
 #[test]
 fn an_instruction_limit_halts_the_run_and_keeps_the_trace_so_far() {
     let dir = tempfile::tempdir().unwrap();
@@ -1030,14 +1031,18 @@ fn an_argument_that_is_not_a_number_is_refused_by_the_flag() {
 /// cargo test --test cli_e2e -- --ignored
 /// ```
 ///
-/// What it asserts today is the boundary, not the profile: the contract build imports Soroban host
-/// functions, `instantiate_module` links against an empty linker, and the run therefore ends before
-/// the export is called. **#210 owns the linker bindings, and the PR that lands them should invert
-/// this test** to `code(&run, 0)` plus a parseable artifact — if it does not, this fails, which is
-/// why the expected failure is written out as an assertion instead of left in a comment.
+/// #210 inverted this test, as it said it should. The build imports four Soroban host functions —
+/// `vec_new`, `obj_from_u64`, `vec_push_back`, `vec_len` — and they now resolve against the real
+/// `Host`, so `memory_heavy_loop` runs to completion and its host calls land in the profile as
+/// costed frames. The two runs here are the pair that makes that claim checkable: the host-using
+/// export produces a nonzero `host[…]` frame, the pure one still produces `wasm[0] 0` and nothing
+/// else, so a regression in either direction shows up as the wrong half of the pair.
+///
+/// The arguments are words, not numbers: an SDK export reads each parameter as a `Val`, so a `u32`
+/// argument arrives tagged (`value << 32 | 4` for `U32Val`, which is 42949672964 for `10`).
 #[test]
 #[ignore = "requires fixtures/build.sh; the 622 KB artifact is not in git"]
-fn the_real_soroban_contract_build_still_stops_at_its_host_imports() {
+fn the_real_soroban_contract_build_runs_and_its_host_calls_are_costed() {
     let bytes = std::fs::read(REAL_BUILD)
         .unwrap_or_else(|error| panic!("reading {REAL_BUILD}: {error} — run fixtures/build.sh"));
     assert!(
@@ -1045,29 +1050,61 @@ fn the_real_soroban_contract_build_still_stops_at_its_host_imports() {
         "the contract build should not be an empty file"
     );
     let dir = tempfile::tempdir().unwrap();
-    let output = dir
-        .path()
-        .join("profile.folded")
-        .to_string_lossy()
-        .into_owned();
 
-    // The exports the build actually has, as the error from a wrong name reports them.
     let run = profiler(&[
         "--wasm",
         REAL_BUILD,
         "--fn",
-        "compute_heavy_loop",
+        "memory_heavy_loop",
+        "--args",
+        "42949672964", // U32Val(10)
         "--output",
-        &output,
+        &dir.path().join("host.folded").to_string_lossy(),
     ]);
-    code(&run, 1);
+    code(&run, 0);
+    let path = dir.path().join("host.folded");
+    let artifact = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("the run exited 0 but left no artifact: {error}"));
+    let stacks = OutputFormatter::parse_folded(&artifact).unwrap_or_else(|error| {
+        panic!("a real contract run must write valid folded stacks: {error}")
+    });
+    assert_eq!(stacks.len(), 2, "unexpected artifact: {artifact:?}");
+    // 10 pushes, a `vec_new` and a `len` — 102 host calls — charged from the host budget, which is
+    // the one accurate cost the trace carries today. The exact figure tracks `soroban-env-host`.
+    let host_cost: u64 = artifact
+        .lines()
+        .find(|line| line.contains("host["))
+        .unwrap_or_else(|| panic!("the host frame is missing from {artifact:?}"))
+        .rsplit(' ')
+        .next()
+        .and_then(|value| value.parse().ok())
+        .expect("the host frame's cost parses as a number");
     assert!(
-        stderr(&run).contains("import"),
-        "the refusal should name the missing host import, got {:?}",
-        stderr(&run)
+        host_cost > 0,
+        "a real host call that costs nothing: {artifact:?}"
     );
     assert!(
-        !Path::new(&output).exists(),
-        "no host bindings means no run, and no run means no profile"
+        stdout(&run).contains("host[0]"),
+        "the summary should rank the host frame it measured: {:?}",
+        stdout(&run)
+    );
+
+    // The same binary, an export that touches no host function: unchanged behaviour, and the
+    // contrast that says the frame above came from the bindings rather than from new accounting.
+    let pure = profiler(&[
+        "--wasm",
+        REAL_BUILD,
+        "--fn",
+        "compute_heavy_loop",
+        "--args",
+        "42949672964", // U32Val(10)
+        "--output",
+        &dir.path().join("pure.folded").to_string_lossy(),
+    ]);
+    code(&pure, 0);
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("pure.folded")).unwrap(),
+        "wasm[0] 0\n",
+        "a pure export crosses no host boundary"
     );
 }

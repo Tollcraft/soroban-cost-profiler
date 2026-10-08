@@ -274,11 +274,12 @@ pub struct ProfilerState {
     pub last_fuel: u64,
 }
 
-/// Instantiate a module and run its start function, with no host imports registered.
+/// Instantiate a module against the real Soroban host and run its start function.
 ///
-/// The linker is intentionally empty: the fixture contracts are pure computation, and
-/// any contract that imports a Soroban host function will fail here until the real host
-/// bindings are wired up.
+/// The linker comes from [`link_soroban_host`](crate::host::link_soroban_host), so a contract that
+/// imports `vec_new` or `obj_from_u64` instantiates and runs the real host implementation while it
+/// does. What the host itself cannot serve — ledger state, contract-to-contract calls — traps from
+/// inside the run rather than failing here; see the module documentation on `soroban_cost_profiler::host`.
 #[tracing::instrument(skip(engine, store, module))]
 pub fn instantiate_module(
     engine: &wasmi::Engine,
@@ -286,7 +287,7 @@ pub fn instantiate_module(
     module: &wasmi::Module,
 ) -> Result<wasmi::Instance, wasmi::Error> {
     info!("Instantiating WASM module");
-    let linker = <wasmi::Linker<ProfilerState>>::new(engine);
+    let linker = crate::host::link_soroban_host(engine)?;
     linker.instantiate_and_start(store, module)
 }
 
