@@ -14,7 +14,7 @@ hands it an unattributable binary.
 No `wasm-objdump`/`wabt` and no `stellar` CLI on the probe machine, so the section data came from
 three sources that agree with each other:
 
-* the repository's own `WasmSections` walker (`src/source_map.rs`), which already retains `name`
+* the repository's own `WasmSections` walker (`src/source_map/wasm.rs`), which already retains `name`
   and `.debug_*`;
 * a standalone parser for the `name` subsections and the code-section size;
 * binaryen itself — `wasm-opt version 133`, `--print-function-map`, and `--print` for the import

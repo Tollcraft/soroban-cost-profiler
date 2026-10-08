@@ -26,7 +26,9 @@ empty bytes for that section id.
 
 `WasmSections::parse` walks the section table (section id, payload length, then, for a custom
 section, the name's length prefix and bytes) and keeps `name` plus anything starting with `.debug`.
-That is the only hand-written parsing in the stage. Everything above it is `gimli`:
+That is the only hand-written parsing in the stage, and it lives on its own in
+`src/source_map/wasm.rs` — the container walk needs nothing from `gimli`, and keeping it separate is
+what makes the boundary above it checkable. Everything above it is `gimli`:
 
 ```rust
 let dwarf = gimli::Dwarf::load(|id| reader(sections.get(id.name()).unwrap_or(&[])))?;
@@ -371,6 +373,8 @@ the pair is committed and the big one is not.
 
 * `src/source_map.rs` — the module docs carry the same facts at code level, plus the dependency
   rationale for `gimli`'s feature set.
+* `src/source_map/wasm.rs` — the section walk itself, with the byte-assembly helpers its tests use
+  to build modules that no toolchain here can emit.
 * `docs/spikes/02_wasm_name_section_fallback.md` — what survives `wasm-opt` and `stellar contract
   build`, and the `name`-section layout.
 * `docs/internals/tracer_architecture.md` — why the `pc` reaching this stage is currently always `0`.
