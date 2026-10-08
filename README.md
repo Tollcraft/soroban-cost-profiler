@@ -3,7 +3,7 @@
   <p><strong>Visual flamegraphs and execution tracing for Soroban smart contracts</strong></p>
   <p>
     <img src="https://img.shields.io/github/actions/workflow/status/Tollcraft/soroban-cost-profiler/ci.yml?branch=main" alt="CI Status" />
-    <img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="License" />
+    <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="License" /></a>
   </p>
   <p>
     <a href="https://tollcraft.gitbook.io/docs"><strong>Documentation</strong></a> ·
@@ -385,3 +385,8 @@ Join the discussion on our [Discord](https://discord.gg/5aprtMSyR).
 ## Contributors
 
 [![Contributors](https://contrib.rocks/image?repo=Tollcraft/soroban-cost-profiler)](https://github.com/Tollcraft/soroban-cost-profiler/graphs/contributors)
+
+## License
+
+Licensed under the Apache License, Version 2.0 — see [LICENSE](LICENSE). The badge at the top of
+this page links to the same file; `Cargo.toml` carries the matching `license = "Apache-2.0"`.
