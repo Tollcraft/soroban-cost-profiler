@@ -15,6 +15,7 @@ edition = "2024"
 description = "Visual flamegraphs and execution tracing for Soroban smart contracts"
 authors = ["Tollcraft"]
 repository = "https://github.com/Tollcraft/soroban-cost-profiler"
+license = "Apache-2.0"
 
 [dependencies]
 soroban-env-host = "28.0.2"
