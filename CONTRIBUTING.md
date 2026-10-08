@@ -158,10 +158,15 @@ the command itself is ever edited.
 Four choices inside it are load-bearing:
 
 * **The order is the endpoint's** — descending by the count it reports — and grouping happens by GitHub
-  *account*, which is what makes it a list of people rather than a list of spellings. `wagmiiii` appears once
-  at 71, where `main`'s history shows three author names (`adajala` 32, `Ademola` 22, `WAGMI` 17) under two
-  addresses that together account for exactly those 71 commits:
-  `git log --format='%ae' origin/main | grep -cE 'ademola2993k@gmail.com|130152505'` prints 71. `git shortlog`
+  *account*, which is what makes it a list of people rather than a list of spellings. `wagmiiii` appears once,
+  where `main`'s history gives one person three author names (`adajala`, `Ademola`, `WAGMI`) across two
+  addresses, so `git log --format='%ae' origin/main | grep -cE 'ademola2993k@gmail.com|130152505'` is the check
+  that the endpoint's top count describes one human being rather than three. What it pins is the **equality of
+  those two counts**, not their value: measured on 2026-10-08 the endpoint said 71 and the grep said 72, because the
+  grep had already counted the merge commit `d30a28f` and the endpoint had not yet reported it, while the two
+  accounts with nothing new merged matched exactly (`mallison031` 19 against 19, `Gabbydunkk` 6 against 6 over two
+  addresses). The endpoint trails the newest commit rather than disagreeing with the history, which a grid that
+  carries its own date can afford. `git shortlog`
   would render one maintainer as three contributors, so the grid takes the endpoint's grouping rather than
   re-deriving one locally — and the section links the repository's own contributors graph for anyone who wants
   the live view.
