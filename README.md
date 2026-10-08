@@ -6,8 +6,8 @@
     <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="License" /></a>
   </p>
   <p>
-    <a href="https://tollcraft.gitbook.io/docs"><strong>Documentation</strong></a> ·
-    <a href="#"><strong>Demo</strong></a>
+    <a href="https://tollcraft.github.io/docs/"><strong>Documentation</strong></a> ·
+    <a href="https://tollcraft.github.io/soroban-cost-profiler/"><strong>Demo</strong></a>
   </p>
 </div>
 
@@ -636,7 +636,31 @@ maintainers listed below, by direct message, so they are private by default.
 
 ## Contributors
 
-[![Contributors](https://contrib.rocks/image?repo=Tollcraft/soroban-cost-profiler)](https://github.com/Tollcraft/soroban-cost-profiler/graphs/contributors)
+<p align="center">
+  <a href="https://github.com/wagmiiii"><img src="https://github.com/wagmiiii.png" width="64" height="64" alt="wagmiiii" title="wagmiiii" /></a>
+  <a href="https://github.com/mallison031"><img src="https://github.com/mallison031.png" width="64" height="64" alt="mallison031" title="mallison031" /></a>
+  <a href="https://github.com/bolabeatz"><img src="https://github.com/bolabeatz.png" width="64" height="64" alt="bolabeatz" title="bolabeatz" /></a>
+  <a href="https://github.com/Gabbydunkk"><img src="https://github.com/Gabbydunkk.png" width="64" height="64" alt="Gabbydunkk" title="Gabbydunkk" /></a>
+  <a href="https://github.com/composure-lad"><img src="https://github.com/composure-lad.png" width="64" height="64" alt="composure-lad" title="composure-lad" /></a>
+  <a href="https://github.com/king-daveed"><img src="https://github.com/king-daveed.png" width="64" height="64" alt="king-daveed" title="king-daveed" /></a>
+  <a href="https://github.com/allison"><img src="https://github.com/allison.png" width="64" height="64" alt="allison" title="allison" /></a>
+  <a href="https://github.com/TemiMustapha"><img src="https://github.com/TemiMustapha.png" width="64" height="64" alt="TemiMustapha" title="TemiMustapha" /></a>
+  <a href="https://github.com/abrcrmb"><img src="https://github.com/abrcrmb.png" width="64" height="64" alt="abrcrmb" title="abrcrmb" /></a>
+  <a href="https://github.com/achiever2110"><img src="https://github.com/achiever2110.png" width="64" height="64" alt="achiever2110" title="achiever2110" /></a>
+  <a href="https://github.com/anitahhhh"><img src="https://github.com/anitahhhh.png" width="64" height="64" alt="anitahhhh" title="anitahhhh" /></a>
+  <a href="https://github.com/simplex001"><img src="https://github.com/simplex001.png" width="64" height="64" alt="simplex001" title="simplex001" /></a>
+  <a href="https://github.com/Teescom"><img src="https://github.com/Teescom.png" width="64" height="64" alt="Teescom" title="Teescom" /></a>
+  <a href="https://github.com/Ayomikun2005"><img src="https://github.com/Ayomikun2005.png" width="64" height="64" alt="Ayomikun2005" title="Ayomikun2005" /></a>
+  <a href="https://github.com/YazarAyobami"><img src="https://github.com/YazarAyobami.png" width="64" height="64" alt="YazarAyobami" title="YazarAyobami" /></a>
+</p>
+
+<p align="center">
+  <sub>Fifteen people, in commit-count order, read from the GitHub contributors API on 2026-10-08.
+  Avatars are served by GitHub directly (<code>github.com/&lt;user&gt;.png</code>) rather than by a
+  third-party badge service, so the grid cannot drift behind the repository's own history. Excluded:
+  <a href="https://github.com/web-flow"><code>web-flow</code></a>, GitHub's own merge bot. See the full
+  <a href="https://github.com/Tollcraft/soroban-cost-profiler/graphs/contributors">contributors graph</a>.</sub>
+</p>
 
 ## License
 
