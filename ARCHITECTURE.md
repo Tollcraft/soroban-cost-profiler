@@ -28,7 +28,7 @@ The profiler is designed as a pipeline that takes a WASM binary and a test scena
    * Wraps the `soroban-env-host` execution.
    * Instruments the WASM engine (`wasmi`) to emit a `TraceEvent` for every function call/return and specific instruction blocks, tracking the cumulative CPU/memory cost at each step.
    
-3. **Source Mapper (`src/source_map.rs`)**
+3. **Source Mapper (`src/source_map/`)**
    * Reads the WASM binary and extracts DWARF debug sections.
    * Converts a WASM instruction pointer (PC) into a human-readable frame (`Function`, `File`, `Line`).
    

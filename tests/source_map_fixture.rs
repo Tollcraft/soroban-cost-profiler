@@ -1,7 +1,7 @@
 //! Phase 3's integration test (#160): does a `line-tables-only` build resolve an address to the
 //! *right* line?
 //!
-//! The unit tests in `src/source_map.rs` prove the mapper loads a binary and answers for most of
+//! The unit tests under `src/source_map/` prove the mapper loads a binary and answers for most of
 //! its code section. Answering is not the same as being correct: subtracting the code section's base
 //! one byte off, or stepping the line program to the neighbouring row, still yields a plausible
 //! `file:line` — it just names the wrong place, and a flamegraph built from it looks exactly as

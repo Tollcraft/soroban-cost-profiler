@@ -42,8 +42,8 @@ addr2line = { version = "0.25.1", default-features = false, features = ["rustc-d
 # `gimli` has to be a direct dependency, not reached through `addr2line::gimli`: addr2line's own
 # dependency is `features = ["read"]`, which excludes `endian-reader`, and `endian-reader` is what
 # provides the owned `EndianRcSlice` a mapper that outlives the caller's buffer needs. Naming it
-# here is also the honest dependency — the section loading in `src/source_map.rs` is gimli's code,
-# not a hand-written DWARF parser, which is what `AGENTS.md` requires.
+# here is also the honest dependency — the section loading in `src/source_map/dwarf.rs` is gimli's
+# code, not a hand-written DWARF parser, which is what `AGENTS.md` requires.
 gimli = { version = "0.32.3", default-features = false, features = ["read", "endian-reader", "std"] }
 clap = { version = "=4.5.0", features = ["derive"] }
 # #215: `--format json` writes the call tree as structured data. `serde_json` was already resolved in

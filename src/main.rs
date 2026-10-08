@@ -989,10 +989,10 @@ mod tests {
     /// `(module (func (export "needs_arg") (param i64) (result i64) local.get 0 i64.const 2 i64.add))`.
     ///
     /// #211's subject at 46 bytes: an export whose signature has a parameter, hand-assembled for the
-    /// same reason `BOOM` and `NEEDS_HOST` are (`source_map.rs` set the precedent) — the committed
-    /// fixtures have no parameterized export, and a `wasm32` build is not available to the test job.
-    /// The body returns `argument + 2`, so the return value says whether the value passed in actually
-    /// arrived.
+    /// same reason `BOOM` and `NEEDS_HOST` are (`source_map/wasm.rs` set the precedent) — the
+    /// committed fixtures have no parameterized export, and a `wasm32` build is not available to the
+    /// test job. The body returns `argument + 2`, so the return value says whether the value passed
+    /// in actually arrived.
     const NEEDS_ARG: &[u8] = b"\x00\x61\x73\x6d\x01\x00\x00\x00\x01\x06\x01\x60\x01\x7e\x01\x7e\x03\x02\x01\x00\x07\x0d\x01\x09\x6e\x65\x65\x64\x73\x5f\x61\x72\x67\x00\x00\x0a\x09\x01\x07\x00\x20\x00\x42\x02\x7c\x0b";
 
     /// The same shape with `(param i32) (result i32)`, for the refusal that is about *width* rather
@@ -1696,12 +1696,12 @@ mod tests {
 
     /// `(module (func (export "boom") unreachable))` — the smallest contract that traps.
     ///
-    /// Written as section bytes rather than built by a toolchain, the same way `source_map.rs`'s
-    /// tests synthesize modules: a fixture that needs `wasm32-unknown-unknown` to exist cannot run
-    /// in `cargo test` on a machine without it, and #173 is about the trap path, not about what
-    /// traps. Bytes, in order: 8-byte header; type section (one `() -> {}` function type); function
-    /// section (function 0 has type 0); export section (`"boom"` = func 0); code section (body of
-    /// `unreachable` + `end`).
+    /// Written as section bytes rather than built by a toolchain, the same way the tests in
+    /// `source_map/wasm.rs` synthesize modules: a fixture that needs `wasm32-unknown-unknown` to
+    /// exist cannot run in `cargo test` on a machine without it, and #173 is about the trap path,
+    /// not about what traps. Bytes, in order: 8-byte header; type section (one `() -> {}` function
+    /// type); function section (function 0 has type 0); export section (`"boom"` = func 0); code
+    /// section (body of `unreachable` + `end`).
     const BOOM: &[u8] = b"\x00\x61\x73\x6d\x01\x00\x00\x00\x01\x04\x01\x60\x00\x00\x03\x02\x01\x00\x07\x08\x01\x04boom\x00\x00\x0a\x05\x01\x03\x00\x00\x0b";
 
     /// The #173 requirement at the stage-1 boundary: a trap keeps the boundaries it crossed and

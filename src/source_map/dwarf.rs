@@ -12,11 +12,11 @@
 //! rest of its `impl` block, because they are the two that walk DWARF:
 //! [`resolve_dwarf`](super::SourceMapper::resolve_dwarf) is the traversal the resolution cache in the
 //! parent remembers the answer of, and
-//! [`degenerate_warning`](super::SourceMapper::degenerate_warning) samples line tables to find out
-//! whether they describe the bytes that ran. What stays in the parent is the facade — construction,
-//! the DWARF-then-`name` precedence, the cache and its bound — plus `collapse_closures`, which is
-//! shared with the `name` path and belongs to neither source: a closure has to render as
-//! `[closure#0]` whichever of the two named it.
+//! [`degenerate_sample`](super::SourceMapper::degenerate_sample) counts how many sampled addresses
+//! the line tables fail to answer. What stays in the parent is the facade — construction, the
+//! DWARF-then-`name` precedence, the cache and its bound, and the threshold that turns that count
+//! into a warning — plus `collapse_closures`, which is shared with the `name` path and belongs to
+//! neither source: a closure has to render as `[closure#0]` whichever of the two named it.
 //!
 //! The measured facts the traversal rests on — the address space, the inline-stack order, the
 //! locations that carry a file and no line — are `docs/internals/dwarf_mapping.md`.
@@ -125,14 +125,18 @@ impl std::fmt::Display for SourceMapError {
 impl std::error::Error for SourceMapError {}
 
 impl SourceMapper {
-    /// The message for a mapper whose own line tables mostly fail to answer, or `None`.
+    /// How many sampled addresses this binary's line tables fail to answer, and how many were
+    /// sampled: `(missing_or_duplicate, total_sampled)`.
     ///
     /// Samples every tenth address of every function body and counts the ones that resolve to
-    /// nothing or to a line some other address already claimed. Over 90% means the DWARF that did
-    /// load describes different code from the bytes that ran — the pre-inlining, pre-optimization
-    /// shape — which is #162's finding and the reason this is a warning rather than an error: the
-    /// run still profiles, the frames are just not to be trusted line by line.
-    pub(super) fn degenerate_warning(&self) -> Option<String> {
+    /// nothing or to a line some other address already claimed. `None` when there is nothing to
+    /// sample — no code section, no DWARF, or a code section whose bodies are all empty — which is
+    /// "nothing to say", not a ratio of zero.
+    ///
+    /// The counting lives here because it walks line tables; what the ratio *means* is the facade's
+    /// (`SourceMapper::degenerate_warning`, with the threshold beside it), so the measurement and the
+    /// policy can change independently.
+    pub(super) fn degenerate_sample(&self) -> Option<(usize, usize)> {
         let code_map = self.code_map()?;
         let context = self.context.as_ref()?;
 
@@ -163,20 +167,7 @@ impl SourceMapper {
             }
         }
 
-        if total_sampled == 0 {
-            return None;
-        }
-        let degenerate_ratio = missing_or_duplicate as f64 / total_sampled as f64;
-        if degenerate_ratio <= 0.90 {
-            return None;
-        }
-        Some(format!(
-            "{:.0}% of the sampled addresses in this binary map to no line or to one another \
-             address already claimed, so its DWARF describes different code from the bytes that \
-             ran — typically pre-inlining, pre-optimization output. The frames below are not wrong \
-             about which functions ran, but read their line numbers with suspicion.",
-            degenerate_ratio * 100.0
-        ))
+        (total_sampled > 0).then_some((missing_or_duplicate, total_sampled))
     }
 
     /// Ask DWARF for one address's inline stack, innermost frame first.

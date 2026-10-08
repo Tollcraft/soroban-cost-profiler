@@ -1,3 +1,28 @@
+//! Stage 2 of the pipeline: the facade the rest of the profiler calls, and the three modules it
+//! delegates to.
+//!
+//! Everything here is [`SourceMapper`], the cache it answers through, and the two policies that are
+//! the facade's own rather than any one symbol source's: which source wins at an address, and what
+//! ratio of unanswered line-table samples makes a binary worth warning about (#162). The reading of
+//! bytes lives in the submodules, and the line that decides which one owns a piece of it is whether
+//! that piece names a `gimli` type:
+//!
+//! * `wasm` walks the container — the section table, the code section's framing, the import count
+//!   — and is the only place a malformed file becomes a [`SourceMapError`].
+//! * `names` reads the `name` section: the function-name-only fallback for a `debug = false` build
+//!   (#157).
+//! * `dwarf` holds the traversal — `gimli::Dwarf::load`, `addr2line::Context`, `find_frames` — plus
+//!   [`CodeMap`], the address map those line tables are written against.
+//!
+//! Nothing in the first two names a DWARF type, which is what makes `AGENTS.md`'s "no custom DWARF
+//! parsing" rule checkable file by file instead of by reading the code: the hand-written parsing that
+//! exists is container-level, and every DWARF byte is read by `gimli`.
+//!
+//! The precedence a lookup follows is DWARF, then `name`, then the `wasm[pc]` the aggregator falls
+//! back to; [`SourceMapper::resolve`] is where that is decided and where the answer is remembered.
+//! The long form of the measurements behind all of it — the address space, the inline-stack order,
+//! what survives `wasm-opt` — is `docs/internals/dwarf_mapping.md`.
+
 use crate::models::SourceFrame;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -162,6 +187,24 @@ pub struct SourceMapper {
 /// that does is one whose answers are too scattered for any reuse policy to help.
 const RESOLUTION_CACHE_LIMIT: usize = 4096;
 
+/// How large a share of sampled addresses a binary's line tables may fail to answer before the run
+/// is told not to trust its line numbers (#162).
+///
+/// The bound is deliberately near the top of the range, and the measurement that puts it there is
+/// the committed fixture: 7 of its 17 sampled addresses count as unanswered, not because its line
+/// tables miss but because the counter also charges an address whose line another sampled address
+/// already claimed, which a loop body of a few source lines does constantly. So a *healthy* binary
+/// scores 41% on this metric and a binary whose DWARF describes different code — the pre-inlining,
+/// pre-optimization shape an optimizer step leaves behind — scores almost 100%. The two populations
+/// are far apart and the threshold only has to stay out of the middle: anything stricter would fire
+/// on ordinary optimized builds, and a warning that fires on a correct binary is a warning the user
+/// learns to skip past.
+///
+/// The silent band includes the bound: exactly 90% unanswered is not degenerate, because a binary
+/// that still answers one sample in ten is degraded rather than wrong, and the frames it does give
+/// are the ones a flamegraph is built from.
+const DEGENERATE_RATIO: f64 = 0.90;
+
 impl SourceMapper {
     /// Build a mapper for one already-loaded WASM binary, reading its DWARF or, failing that, its
     /// `name` section.
@@ -190,7 +233,7 @@ impl SourceMapper {
     ///
     /// // A build with debug info off but its `name` section left in is degraded, not hopeless:
     /// // the mapper loads, and every frame it gives is a function with no file and no line.
-    /// let stripped = include_bytes!("../fixtures/dwarf_probe/dwarf_probe_no_debug.wasm");
+    /// let stripped = include_bytes!("../../fixtures/dwarf_probe/dwarf_probe_no_debug.wasm");
     /// let mapper = SourceMapper::new(stripped).expect("this fixture keeps its `name` section");
     /// assert!(!mapper.has_debug_info(), "names only — there is no DWARF to ask");
     /// let stack = mapper.resolve(3);
@@ -205,7 +248,7 @@ impl SourceMapper {
     /// assert!(matches!(error, SourceMapError::MissingDebugInfo { .. }));
     ///
     /// // The same functions built with `debug = 1` load DWARF, and the difference is the point.
-    /// let mapped = SourceMapper::new(include_bytes!("../fixtures/dwarf_probe/dwarf_probe.wasm"));
+    /// let mapped = SourceMapper::new(include_bytes!("../../fixtures/dwarf_probe/dwarf_probe.wasm"));
     /// assert!(mapped.unwrap().has_debug_info());
     /// ```
     ///
@@ -252,6 +295,19 @@ impl SourceMapper {
         };
         mapper.warning = mapper.degenerate_warning();
         Ok(mapper)
+    }
+
+    /// The message for a mapper whose own line tables mostly fail to answer, or `None`.
+    ///
+    /// The sample is taken in `dwarf`, because taking it walks line tables; the judgement is here,
+    /// because it is the facade's — [`DEGENERATE_RATIO`] is what this stage promises a user about
+    /// when it will interrupt them, and the CLI reads the answer through [`SourceMapper::warning`].
+    /// Over the bound means the DWARF that did load describes different code from the bytes that
+    /// ran, which is #162's finding and the reason this is a warning rather than an error: the run
+    /// still profiles, the frames are just not to be trusted line by line.
+    fn degenerate_warning(&self) -> Option<String> {
+        let (missing_or_duplicate, sampled) = self.degenerate_sample()?;
+        degenerate_message(missing_or_duplicate, sampled)
     }
 
     /// A mapper that resolves nothing, for a run that continues without symbols.
@@ -341,7 +397,7 @@ impl SourceMapper {
     /// assert!(mapper.resolve(0).is_empty());
     ///
     /// // A real build resolves: this fixture is Rust code compiled for wasm32-unknown-unknown.
-    /// let fixture = include_bytes!("../fixtures/dwarf_probe/dwarf_probe.wasm");
+    /// let fixture = include_bytes!("../../fixtures/dwarf_probe/dwarf_probe.wasm");
     /// let mapper = SourceMapper::new(fixture).expect("the fixture carries DWARF");
     /// let stack = mapper.resolve(3);
     /// assert_eq!(stack.len(), 1, "address 3 is not an inlined call site");
@@ -405,7 +461,7 @@ impl SourceMapper {
     /// ```
     /// use soroban_cost_profiler::source_map::SourceMapper;
     ///
-    /// let stripped = include_bytes!("../fixtures/dwarf_probe/dwarf_probe_no_debug.wasm");
+    /// let stripped = include_bytes!("../../fixtures/dwarf_probe/dwarf_probe_no_debug.wasm");
     /// let mapper = SourceMapper::new(stripped).expect("the fixture carries a `name` section");
     ///
     /// // Every address inside the first function's body answers with its name.
@@ -463,7 +519,7 @@ impl SourceMapper {
     /// ```
     /// use soroban_cost_profiler::source_map::SourceMapper;
     ///
-    /// let fixture = include_bytes!("../fixtures/dwarf_probe/dwarf_probe.wasm");
+    /// let fixture = include_bytes!("../../fixtures/dwarf_probe/dwarf_probe.wasm");
     /// let mapper = SourceMapper::new(fixture).expect("the fixture carries DWARF");
     ///
     /// // In this fixture the code section's payload begins at file offset 111, and the first
@@ -494,6 +550,25 @@ impl SourceMapper {
 
         self.resolve(address)
     }
+}
+
+/// The warning one line-table sample earns, or `None` when it is within [`DEGENERATE_RATIO`].
+///
+/// Split out from [`SourceMapper::degenerate_warning`] so the threshold and the sentence are
+/// testable on their own: no committed fixture is degenerate, so a test that only asked a mapper
+/// could never reach the branch that tells a user their line numbers are wrong. The percentage is
+/// the measured one rather than the threshold, so the message says what this binary did.
+fn degenerate_message(missing_or_duplicate: usize, sampled: usize) -> Option<String> {
+    let degenerate_ratio = missing_or_duplicate as f64 / sampled as f64;
+    (degenerate_ratio > DEGENERATE_RATIO).then(|| {
+        format!(
+            "{:.0}% of the sampled addresses in this binary map to no line or to one another \
+             address already claimed, so its DWARF describes different code from the bytes that \
+             ran — typically pre-inlining, pre-optimization output. The frames below are not wrong \
+             about which functions ran, but read their line numbers with suspicion.",
+            degenerate_ratio * 100.0
+        )
+    })
 }
 
 /// Rewrite rustc's anonymous closure segments into bracketed markers.
@@ -642,11 +717,11 @@ mod tests {
     /// what its line tables and its `name` section say about one address space, and that comparison
     /// means nothing unless both halves are reading these exact bytes.
     pub(super) const DWARF_PROBE: &[u8] =
-        include_bytes!("../fixtures/dwarf_probe/dwarf_probe.wasm");
+        include_bytes!("../../fixtures/dwarf_probe/dwarf_probe.wasm");
 
     /// The same three functions built with `debug = false`: no DWARF, same `name` section.
     const NO_DEBUG_PROBE: &[u8] =
-        include_bytes!("../fixtures/dwarf_probe/dwarf_probe_no_debug.wasm");
+        include_bytes!("../../fixtures/dwarf_probe/dwarf_probe_no_debug.wasm");
 
     #[test]
     fn an_empty_input_is_not_a_module() {
@@ -1130,5 +1205,75 @@ mod tests {
 
         assert!(mapper.code_map().is_none());
         assert!(mapper.resolve_file_offset(113).is_empty());
+    }
+
+    #[test]
+    fn a_sample_at_the_threshold_is_not_a_degenerate_binary() {
+        // The silent band includes the threshold itself: a binary that still answers one sample
+        // in ten is degraded, not wrong, and interrupting a run over it is how warnings get
+        // ignored.
+        assert_eq!(degenerate_message(9, 10), None, "exactly 90% is inside");
+        assert_eq!(degenerate_message(90, 100), None);
+        assert_eq!(degenerate_message(0, 17), None, "answers every sample");
+
+        // `degenerate_sample` returns `None` rather than a zero total when there is nothing to walk,
+        // so this ratio is never formed in practice — but a NaN would compare false against the
+        // bound, so even an unguarded zero would answer "no warning" rather than panic.
+        assert_eq!(degenerate_message(0, 0), None);
+    }
+
+    #[test]
+    fn a_sample_past_the_threshold_names_the_percentage_it_measured() {
+        let message = degenerate_message(91, 100).expect("91% is past the bound");
+
+        assert!(
+            message.starts_with("91%"),
+            "the message says what this binary measured, not the threshold: {message}"
+        );
+        assert!(
+            message.contains("different code from the bytes that ran"),
+            "and what that means: {message}"
+        );
+        assert!(
+            message.contains("read their line numbers with suspicion"),
+            "and what to do about it: {message}"
+        );
+        // Every address unanswered is the shape #162 measured on an optimized artifact whose DWARF
+        // came from the pre-inlining build.
+        assert!(
+            degenerate_message(166, 166)
+                .expect("nothing answered at all")
+                .starts_with("100%"),
+            "the ratio is the measured one, so a total miss reads as 100%"
+        );
+    }
+
+    #[test]
+    fn the_committed_fixture_samples_its_line_tables_and_earns_no_warning() {
+        // The sampler's half of the split, against a real binary: three bodies of 14, 139 and 7
+        // bytes sampled every tenth address is 2 + 14 + 1 addresses. 7 of those 17 count as
+        // unanswered, and none of them is a miss — the counter also charges an address whose line
+        // another sampled address already claimed, which a loop body of a few source lines does
+        // constantly. That is the measurement behind `DEGENERATE_RATIO` sitting at 0.90 rather than
+        // anywhere near a healthy binary's 41%: only a table describing *different* code misses
+        // almost everything. `main.rs` pins the same fact from the CLI side, where it reads as "a
+        // properly built artifact earns no warning"; this pins the count the ratio is built from.
+        let mapper = SourceMapper::new(DWARF_PROBE).expect("the fixture carries DWARF");
+
+        let (missing_or_duplicate, sampled) = mapper
+            .degenerate_sample()
+            .expect("the fixture has function bodies and DWARF to walk");
+
+        assert_eq!(sampled, 17, "one sample per ten addresses of each body");
+        assert_eq!(
+            missing_or_duplicate, 7,
+            "repeated lines in a small fixture's loop bodies, not misses"
+        );
+        assert_eq!(mapper.warning(), None);
+
+        // A mapper with no DWARF has nothing to sample, and says so rather than reporting a ratio.
+        let named = SourceMapper::new(NO_DEBUG_PROBE).expect("the stripped fixture");
+        assert_eq!(named.degenerate_sample(), None);
+        assert_eq!(SourceMapper::unmapped().degenerate_sample(), None);
     }
 }

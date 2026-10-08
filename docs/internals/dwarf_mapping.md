@@ -1,6 +1,6 @@
 # DWARF Mapping: how a WASM address becomes a Rust source frame
 
-Stage 2 of the pipeline (`src/source_map.rs`) turns the program counters in a `TraceEvent` stream
+Stage 2 of the pipeline (`src/source_map/`) turns the program counters in a `TraceEvent` stream
 into the names a flamegraph shows. This is the contributor-facing guide to what `addr2line` actually
 does with those bytes, and to the ways it can return nothing while every call in it succeeded.
 
@@ -215,10 +215,10 @@ is not part of a run, because two sibling closures in one function are different
 `CallStackNode`'s children are keyed by name — flattening both to `[closure]` would pool them into a
 single frame and lose which one spent the fuel.
 
-The rewrite lives in `src/source_map.rs`, not in the `src/source_map/dwarf.rs` module whose
-`frame_name` calls it, because #157's `name`-section path calls the same function on the same shapes:
-a closure has to render identically whichever of the two sources named it, and one shared helper is
-the mechanism behind the claim that they agree.
+The rewrite lives in the `src/source_map/mod.rs` facade, not in the `src/source_map/dwarf.rs` module
+whose `frame_name` calls it, because #157's `name`-section path calls the same function on the same
+shapes: a closure has to render identically whichever of the two sources named it, and one shared
+helper is the mechanism behind the claim that they agree.
 
 `{{closure}}`, the spelling #155 names, is legacy mangling. v0 encodes a closure structurally
 (`…13closure_probe5outer0E…` in the same crate's `name` section, the trailing digit being the
@@ -386,14 +386,16 @@ the pair is committed and the big one is not.
 
 ## See also
 
-* `src/source_map.rs` — the module docs carry the same facts at code level, plus the dependency
-  rationale for `gimli`'s feature set.
+* `src/source_map/mod.rs` — the facade: the module docs carry the same facts at code level, plus the
+  dependency rationale for `gimli`'s feature set and the threshold that turns a degenerate line-table
+  sample into a warning.
 * `src/source_map/wasm.rs` — the section walk itself, with the byte-assembly helpers its tests use
   to build modules that no toolchain here can emit.
 * `src/source_map/names.rs` — the `name`-section fallback, and the synthetic-module helpers that pin
   the import offset neither committed fixture can.
 * `src/source_map/dwarf.rs` — the traversal this document describes: `CodeMap`, `SourceMapError`, the
-  `gimli`/`addr2line` loading, and the two `SourceMapper` methods that walk line tables.
+  `gimli`/`addr2line` loading, and the two `SourceMapper` methods that walk line tables — the one that
+  resolves an address and the one that samples the tables for the facade's degenerate check.
 * `docs/spikes/02_wasm_name_section_fallback.md` — what survives `wasm-opt` and `stellar contract
   build`, and the `name`-section layout.
 * `docs/internals/tracer_architecture.md` — why the `pc` reaching this stage is currently always `0`.

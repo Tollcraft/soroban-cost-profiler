@@ -1,7 +1,7 @@
 # `dwarf_probe` — source-mapping test data
 
 Two pre-built WASM binaries of the same three functions in `src/lib.rs`, committed so that
-`src/source_map.rs` tests can assert against real Rust DWARF without a wasm build in the test
+the `src/source_map/` tests can assert against real Rust DWARF without a wasm build in the test
 job (`ci.yml` builds the fixture in a separate job whose artifact the tests cannot read).
 
 | File | Built with | Size | Custom sections |
