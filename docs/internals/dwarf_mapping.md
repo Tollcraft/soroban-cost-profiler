@@ -231,7 +231,9 @@ and the fact that binaryen deletes it unless `-g` is passed are in
 version byte, which is only decidable because the bodies tile the payload exactly — and keeps kind `1`
 alone. Kind `0` is the module name and kind `7`, which both fixtures carry, names globals; unknown
 kinds are skipped rather than rejected, because the section is shared with proposals this stage never
-reads.
+reads. It lives in `src/source_map/names.rs`, which is the "needs no `gimli`" claim above as a file
+boundary: nothing in that module names a DWARF type, so the fallback cannot have grown a dependency
+on the traversal it is the alternative to.
 
 Two things about the records decide the design, and both are #141's measurements rather than guesses:
 
@@ -375,6 +377,8 @@ the pair is committed and the big one is not.
   rationale for `gimli`'s feature set.
 * `src/source_map/wasm.rs` — the section walk itself, with the byte-assembly helpers its tests use
   to build modules that no toolchain here can emit.
+* `src/source_map/names.rs` — the `name`-section fallback, and the synthetic-module helpers that pin
+  the import offset neither committed fixture can.
 * `docs/spikes/02_wasm_name_section_fallback.md` — what survives `wasm-opt` and `stellar contract
   build`, and the `name`-section layout.
 * `docs/internals/tracer_architecture.md` — why the `pc` reaching this stage is currently always `0`.
