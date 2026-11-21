@@ -622,7 +622,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for more detailed guidelines.
 
 ## Community
 
-Join the discussion on our [Discord](https://discord.gg/5aprtMSyR).
+Join the discussion on our [Discord](https://discord.gg/5aprtMSyR), or follow the org on [X](https://x.com/tollcraft_dev).
 
 Participation in this repository, its issue tracker and that Discord is governed by our
 [Code of Conduct](CODE_OF_CONDUCT.md) — the Contributor Covenant, version 2.1. Reports go to the
